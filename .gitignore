@@ -1,0 +1,15 @@
+node_modules/
+.DS_Store
+*.log
+nohup.out
+/*.png
+# Diagnostic screenshots taken while verifying the Windows build land here.
+# Intentional images live in windows/assets/, which stays tracked.
+/windows/*.png
+
+# Raw FlyWire source dumps for the ETL scripts: large, public, regenerable.
+/raw_flywire/
+/raw_flywire_v2/
+
+# screenshots written by the isolated UI tests
+windows/test-artifacts/

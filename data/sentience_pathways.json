@@ -1,0 +1,425 @@
+{
+ "source": "FlyWire Codex FAFB v783, complete connectome (classification, consolidated cell types, unthresholded connections summed per pair)",
+ "generatedBy": "etl_pathways.mjs",
+ "inputSHA256": {
+  "classification.csv.gz": "e946b552f4056dfc977707be0674609832c3f64332a22d69dc0d9615e7aae663",
+  "consolidated_cell_types.csv.gz": "8aba246d71dc40361677493629972ce3883048c3d02010adc42bda22962a1a2d",
+  "connections.csv.gz": "62c2e562a7470bfd32cbb98e36af3daa607ba0822b37223b34f2aa45250a920e"
+ },
+ "threshold": "a connection counts when a pair shares >= 5 synapses",
+ "note": "Measured anatomy of the real fly brain, not of the simulated subset. Reaching a region says a route exists, not that it is used, or used for anything like feeling.",
+ "sources": {
+  "bitter": {
+   "label": "Bitter taste neurons",
+   "cells": 65,
+   "regions": {
+    "mushroomBody": {
+     "label": "Mushroom body (KC, MBON, PAM/PPL, APL, DPM)",
+     "regionCells": 5608,
+     "minSynapses": 2,
+     "within2": 45,
+     "within3": 1125,
+     "twoSynapseRoutesVia": [
+      {
+       "type": "VP5+Z_adPN",
+       "regionCellsReached": 37
+      },
+      {
+       "type": "SLP234",
+       "regionCellsReached": 5
+      },
+      {
+       "type": "AN_SLP_LH_1",
+       "regionCellsReached": 3
+      }
+     ]
+    },
+    "centralComplex": {
+     "label": "Central complex (EPG, PEN, PFN, FB, ER, ...)",
+     "regionCells": 2160,
+     "minSynapses": 3,
+     "within2": 0,
+     "within3": 259,
+     "twoSynapseRoutesVia": []
+    },
+    "lateralHorn": {
+     "label": "Lateral horn (LH*)",
+     "regionCells": 1227,
+     "minSynapses": 2,
+     "within2": 175,
+     "within3": 1020,
+     "twoSynapseRoutesVia": [
+      {
+       "type": "CB3623",
+       "regionCellsReached": 39
+      },
+      {
+       "type": "SLP235",
+       "regionCellsReached": 20
+      },
+      {
+       "type": "CB0638",
+       "regionCellsReached": 17
+      },
+      {
+       "type": "AVLP447",
+       "regionCellsReached": 15
+      },
+      {
+       "type": "SLP238",
+       "regionCellsReached": 14
+      },
+      {
+       "type": "Z_vPNml1",
+       "regionCellsReached": 11
+      }
+     ]
+    }
+   }
+  },
+  "hot": {
+   "label": "Hot cells (thermosensory, heating)",
+   "cells": 7,
+   "regions": {
+    "mushroomBody": {
+     "label": "Mushroom body (KC, MBON, PAM/PPL, APL, DPM)",
+     "regionCells": 5608,
+     "minSynapses": 2,
+     "within2": 512,
+     "within3": 5518,
+     "twoSynapseRoutesVia": [
+      {
+       "type": "V_ilPN",
+       "regionCellsReached": 366
+      },
+      {
+       "type": "VP2_adPN",
+       "regionCellsReached": 120
+      },
+      {
+       "type": "OA-VUMa6",
+       "regionCellsReached": 9
+      },
+      {
+       "type": "M_l2PNm14",
+       "regionCellsReached": 7
+      },
+      {
+       "type": "CB1321",
+       "regionCellsReached": 5
+      },
+      {
+       "type": "OA-VUMa5",
+       "regionCellsReached": 2
+      }
+     ]
+    },
+    "centralComplex": {
+     "label": "Central complex (EPG, PEN, PFN, FB, ER, ...)",
+     "regionCells": 2160,
+     "minSynapses": 2,
+     "within2": 15,
+     "within3": 904,
+     "twoSynapseRoutesVia": [
+      {
+       "type": "M_l2PNm14",
+       "regionCellsReached": 10
+      },
+      {
+       "type": "OA-VUMa6",
+       "regionCellsReached": 4
+      },
+      {
+       "type": "VP2+_adPN",
+       "regionCellsReached": 1
+      }
+     ]
+    },
+    "lateralHorn": {
+     "label": "Lateral horn (LH*)",
+     "regionCells": 1227,
+     "minSynapses": 1,
+     "within2": 433,
+     "within3": 1208,
+     "twoSynapseRoutesVia": [
+      {
+       "type": "V_ilPN",
+       "regionCellsReached": 130
+      },
+      {
+       "type": "VP2_adPN",
+       "regionCellsReached": 89
+      },
+      {
+       "type": "M_l2PNm14",
+       "regionCellsReached": 37
+      },
+      {
+       "type": "VP2+_adPN",
+       "regionCellsReached": 29
+      },
+      {
+       "type": "VP4+VL1_l2PN",
+       "regionCellsReached": 27
+      },
+      {
+       "type": "M_smPN6t2",
+       "regionCellsReached": 24
+      }
+     ]
+    }
+   }
+  },
+  "cold": {
+   "label": "Cold cells (thermosensory, cold)",
+   "cells": 9,
+   "regions": {
+    "mushroomBody": {
+     "label": "Mushroom body (KC, MBON, PAM/PPL, APL, DPM)",
+     "regionCells": 5608,
+     "minSynapses": 2,
+     "within2": 287,
+     "within3": 5204,
+     "twoSynapseRoutesVia": [
+      {
+       "type": "VP3+VP1l_ivPN",
+       "regionCellsReached": 182
+      },
+      {
+       "type": "VP5+Z_adPN",
+       "regionCellsReached": 55
+      },
+      {
+       "type": "VP3+_vPN",
+       "regionCellsReached": 25
+      },
+      {
+       "type": "M_l2PNm16",
+       "regionCellsReached": 12
+      },
+      {
+       "type": "M_ilPN8t91",
+       "regionCellsReached": 9
+      },
+      {
+       "type": "CB1321",
+       "regionCellsReached": 2
+      }
+     ]
+    },
+    "centralComplex": {
+     "label": "Central complex (EPG, PEN, PFN, FB, ER, ...)",
+     "regionCells": 2160,
+     "minSynapses": 2,
+     "within2": 10,
+     "within3": 615,
+     "twoSynapseRoutesVia": [
+      {
+       "type": "VP1l+VP3_ilPN",
+       "regionCellsReached": 5
+      },
+      {
+       "type": "M_ilPN8t91",
+       "regionCellsReached": 4
+      },
+      {
+       "type": "M_smPNm1",
+       "regionCellsReached": 1
+      }
+     ]
+    },
+    "lateralHorn": {
+     "label": "Lateral horn (LH*)",
+     "regionCells": 1227,
+     "minSynapses": 2,
+     "within2": 285,
+     "within3": 1201,
+     "twoSynapseRoutesVia": [
+      {
+       "type": "VP3+VP1l_ivPN",
+       "regionCellsReached": 60
+      },
+      {
+       "type": "M_l2PNm16",
+       "regionCellsReached": 52
+      },
+      {
+       "type": "M_ilPN8t91",
+       "regionCellsReached": 46
+      },
+      {
+       "type": "M_smPNm1",
+       "regionCellsReached": 36
+      },
+      {
+       "type": "VP1l+VP3_ilPN",
+       "regionCellsReached": 28
+      },
+      {
+       "type": "VP5+Z_adPN",
+       "regionCellsReached": 15
+      }
+     ]
+    }
+   }
+  },
+  "sugar": {
+   "label": "Sugar/water taste neurons",
+   "cells": 129,
+   "regions": {
+    "mushroomBody": {
+     "label": "Mushroom body (KC, MBON, PAM/PPL, APL, DPM)",
+     "regionCells": 5608,
+     "minSynapses": 2,
+     "within2": 390,
+     "within3": 5537,
+     "twoSynapseRoutesVia": [
+      {
+       "type": "VL2p_adPN",
+       "regionCellsReached": 211
+      },
+      {
+       "type": "VL1_ilPN",
+       "regionCellsReached": 84
+      },
+      {
+       "type": "VP5+Z_adPN",
+       "regionCellsReached": 67
+      },
+      {
+       "type": "CB0687",
+       "regionCellsReached": 10
+      },
+      {
+       "type": "CB0546",
+       "regionCellsReached": 9
+      },
+      {
+       "type": "M_l2PNl20",
+       "regionCellsReached": 4
+      }
+     ]
+    },
+    "centralComplex": {
+     "label": "Central complex (EPG, PEN, PFN, FB, ER, ...)",
+     "regionCells": 2160,
+     "minSynapses": 2,
+     "within2": 2,
+     "within3": 445,
+     "twoSynapseRoutesVia": [
+      {
+       "type": "CB0643",
+       "regionCellsReached": 2
+      }
+     ]
+    },
+    "lateralHorn": {
+     "label": "Lateral horn (LH*)",
+     "regionCells": 1227,
+     "minSynapses": 2,
+     "within2": 329,
+     "within3": 1202,
+     "twoSynapseRoutesVia": [
+      {
+       "type": "VL2p_adPN",
+       "regionCellsReached": 82
+      },
+      {
+       "type": "VL1_ilPN",
+       "regionCellsReached": 51
+      },
+      {
+       "type": "VP5+Z_adPN",
+       "regionCellsReached": 33
+      },
+      {
+       "type": "M_l2PNl21",
+       "regionCellsReached": 32
+      },
+      {
+       "type": "VP1d+VP4_l2PN2",
+       "regionCellsReached": 31
+      },
+      {
+       "type": "VL2p_vPN",
+       "regionCellsReached": 22
+      }
+     ]
+    }
+   }
+  },
+  "joF": {
+   "label": "JO-F antennal grooming mechanosensors",
+   "cells": 205,
+   "regions": {
+    "mushroomBody": {
+     "label": "Mushroom body (KC, MBON, PAM/PPL, APL, DPM)",
+     "regionCells": 5608,
+     "minSynapses": 2,
+     "within2": 6,
+     "within3": 3022,
+     "twoSynapseRoutesVia": [
+      {
+       "type": "WED182",
+       "regionCellsReached": 3
+      },
+      {
+       "type": "CB0497",
+       "regionCellsReached": 2
+      },
+      {
+       "type": "CB3527",
+       "regionCellsReached": 1
+      }
+     ]
+    },
+    "centralComplex": {
+     "label": "Central complex (EPG, PEN, PFN, FB, ER, ...)",
+     "regionCells": 2160,
+     "minSynapses": 2,
+     "within2": 2,
+     "within3": 822,
+     "twoSynapseRoutesVia": [
+      {
+       "type": "CB0595",
+       "regionCellsReached": 2
+      }
+     ]
+    },
+    "lateralHorn": {
+     "label": "Lateral horn (LH*)",
+     "regionCells": 1227,
+     "minSynapses": 2,
+     "within2": 71,
+     "within3": 976,
+     "twoSynapseRoutesVia": [
+      {
+       "type": "AN_LH_AVLP_1",
+       "regionCellsReached": 30
+      },
+      {
+       "type": "WED182",
+       "regionCellsReached": 11
+      },
+      {
+       "type": "AN_multi_68",
+       "regionCellsReached": 6
+      },
+      {
+       "type": "mALB4",
+       "regionCellsReached": 6
+      },
+      {
+       "type": "AN_multi_60",
+       "regionCellsReached": 6
+      },
+      {
+       "type": "WED060",
+       "regionCellsReached": 5
+      }
+     ]
+    }
+   }
+  }
+ }
+}

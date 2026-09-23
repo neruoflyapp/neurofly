@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>NeuroFly reel stage</title>
+<link rel="stylesheet" href="./reels.css">
+</head>
+<body>
+<main id="stage">
+  <div id="brain"></div>
+  <div class="scan" aria-hidden="true"></div>
+  <div class="vignette" aria-hidden="true"></div>
+  <header><img class="brand-logo" src="../assets/brand/neurofly-logo-dark.svg" alt="NeuroFly"></header>
+  <div class="topline"><span class="rule"></span><span id="chapter">CONNECTOME</span></div>
+  <div class="crosshair" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+  <section class="copy"><div class="eyebrow" id="eyebrow"></div><h1 id="headline"></h1><p id="detail"></p></section>
+  <footer><div class="source">FAFB v783 · adult female brain<br>sampled links · model activity, not recorded spikes</div><div class="url">neurofly.app <span>↗</span></div></footer>
+</main>
+<script type="module" src="./reels.js"></script>
+</body>
+</html>

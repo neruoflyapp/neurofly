@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import { NeuronProbe } from '../src/neuron-probe.js';
+const circuit = { neurons: [{ id: '720575940600000001', type: 'LC4', role: 'lc4' }, { id: '720575940600000002', type: 'GF', role: 'gf' }], edges: [[0, 1, 4], [0, 0, -2]] };
+const probe = new NeuronProbe(circuit);
+const sim = { n: 2, v: new Float32Array([.25, .75]), refr: new Float32Array([0, 2]), threshold: 1, simMs: 7 };
+const before = JSON.stringify(sim);
+assert.equal(probe.select('720575940600000002'), true);
+assert.deepEqual(probe.snapshot(sim), { index: 1, id: '720575940600000002', type: 'GF', role: 'gf', side: null, sensoryGroup: null, incomingEdges: 1, outgoingEdges: 0, membrane: .75, threshold: 1, refractoryMs: 2, neuralTimeMs: 7 });
+assert.equal(probe.select('#0'), true);
+assert.equal(probe.snapshot(sim).incomingEdges, 1); assert.equal(probe.snapshot(sim).outgoingEdges, 2);
+for (const bad of ['#-1', '#2', '#1.5', 'NaN', '720575940600000003', '']) assert.equal(probe.select(bad), false);
+assert.equal(probe.index, 0); assert.equal(JSON.stringify(sim), before);
+console.log('PASS exact large neuron IDs, index validation, anatomical edge counts, read-only live state');

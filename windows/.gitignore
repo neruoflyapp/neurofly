@@ -1,0 +1,4 @@
+node_modules/
+npm-install.log
+*.log
+/promos/

@@ -1,0 +1,48 @@
+{
+  "name": "neurofly",
+  "version": "2.1.0",
+  "description": "NeuroFly — a fruit fly driven by the real FlyWire connectome and a MaleCNS walking circuit",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "reels:render": "node tools/render-reels.mjs",
+    "uitest": "electron test/electron-smoke.mjs",
+    "pretest": "node test/journaltest.js && node test/recordingpackagetest.js && node test/specimentest.js && node test/specimenservicetest.js && node test/swctest.js",
+    "simtest": "node test/simtest.js",
+    "behaviortest": "node test/behaviortest.js",
+    "test": "node test/sciencetest.js && node test/sensorytest.js && node test/thermotest.js && node test/pathwaytest.js && node test/experimenttest.js && node test/plasticitytest.js && node test/learningsessiontest.js && node test/manifesttest.js && node test/plasticity-exporttest.js && node test/saveiotest.js && node test/samplingtest.js && node test/neuronprobetest.js && node test/performancetest.js && node test/simtest.js && node test/behaviortest.js && node test/locomotortest.js && node test/worldtest.js && node test/visiontest.js && node test/displaytest.js && node test/environmenttest.js && node test/spatialtest.js && node test/recordingtest.js && node test/historytest.js",
+    "sciencetest": "node test/sciencetest.js",
+    "pathwaytest": "node test/pathwaytest.js",
+    "experimenttest": "node test/experimenttest.js",
+    "specimentest": "node test/specimentest.js",
+    "specimens:uitest": "node test/specimen-ui-smoke.cjs",
+    "datasets:acquire": "node tools/acquire-connectomes.mjs",
+    "plasticitytest": "node test/plasticitytest.js",
+    "manifesttest": "node test/manifesttest.js",
+    "performancetest": "node test/performancetest.js",
+    "locomotortest": "node test/locomotortest.js",
+    "worldtest": "node test/worldtest.js",
+    "visiontest": "node test/visiontest.js",
+    "displaytest": "node test/displaytest.js",
+    "spatialtest": "node test/spatialtest.js",
+    "recordingtest": "node test/recordingtest.js",
+    "environmenttest": "node test/environmenttest.js",
+    "historytest": "node test/historytest.js",
+    "sensorytest": "node test/sensorytest.js",
+    "thermotest": "node test/thermotest.js"
+  },
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "NeuroFly <contact@neurofly.app>",
+  "homepage": "https://neurofly.app",
+  "dependencies": {
+    "three": "^0.169.0"
+  },
+  "devDependencies": {
+    "electron": "^44.3.0",
+    "playwright-core": "^1.63.0"
+  },
+  "allowScripts": {
+    "electron@44.3.0": true
+  }
+}

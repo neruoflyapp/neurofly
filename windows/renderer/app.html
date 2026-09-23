@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;">
+<title>NeuroFly</title>
+<link rel="stylesheet" href="./neurofly.css">
+</head>
+<body>
+<div id="boot" role="status" aria-live="polite">
+  <div class="boot-mark" role="img" aria-label="NeuroFly"></div>
+  <div class="boot-line" id="bootLine">Loading the connectome…</div>
+  <div class="boot-bar"><span id="bootBar"></span></div>
+</div>
+<header id="topbar">
+  <div class="wordmark" role="img" aria-label="NeuroFly"></div>
+  <div id="runStatus"></div>
+  <div id="topActions"></div>
+</header>
+<div id="workspace">
+  <nav id="rail" aria-label="Workspaces" role="tablist" aria-orientation="vertical"></nav>
+  <aside id="panel" aria-live="off"></aside>
+  <main id="stage">
+    <section id="terrarium" aria-label="Terrarium">
+      <div id="hud"></div>
+    </section>
+    <section id="dock" aria-label="Measurements"></section>
+  </main>
+  <aside id="inspector">
+    <section id="brain" aria-label="Connectome"></section>
+    <section id="why" aria-label="Why she did it"></section>
+  </aside>
+</div>
+<div id="toasts" aria-live="polite"></div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
