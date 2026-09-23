@@ -59,7 +59,15 @@ Birch et al. (2021) and says which of them the model does not contain at all.
 findings the model does **not** reproduce, the verification suite, and a
 corrections log of claims this project measured and then had to withdraw.
 
-## Run it
+## Download
+
+The portable build for Windows 10 and 11 (64-bit) is on the
+[releases page](https://github.com/neuroflyapp/neurofly/releases/latest): unzip
+it anywhere and start `NeuroFly.exe`; nothing is installed. The build is not
+code-signed yet, so Windows may warn on first start (More info → Run anyway).
+By downloading you accept the [software terms](https://neurofly.app/software-terms.html).
+
+## Run it from source
 
 ```sh
 cd windows
@@ -69,7 +77,8 @@ npm test           # all 28 suites
 npm run uitest     # end-to-end test of the running application
 ```
 
-Requires Node.js 20+ on Windows 10/11.
+Requires Node.js 20+ on Windows 10/11. `windows/tools/build-portable.ps1` builds
+the portable release from the committed files.
 
 ## Regenerating the neural data
 
