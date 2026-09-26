@@ -12,7 +12,7 @@
 // finding; disagreement is reported just as plainly, as is a finding the
 // model has no mechanism for.
 
-import { wilson, fisherExact, mannWhitney, fitLogistic, mean, sem, linearFit } from './stats.js';
+import { wilson, fisherExact, mannWhitney, holmAdjusted, fitLogistic, mean, sem, linearFit } from './stats.js';
 
 export const LITERATURE = Object.freeze({
   vonReyn2014: { cite: 'von Reyn et al. (2014) Nat Neurosci 17:962', doi: 'https://doi.org/10.1038/nn.3741' },
@@ -30,6 +30,7 @@ export const LITERATURE = Object.freeze({
   lima2005: { cite: 'Lima & Miesenböck (2005) Cell 121:141', doi: 'https://doi.org/10.1016/j.cell.2005.02.004' },
   hamada2008: { cite: 'Hamada et al. (2008) Nature 454:217', doi: 'https://doi.org/10.1038/nature07001' },
   sayeed1996: { cite: 'Sayeed & Benzer (1996) PNAS 93:6079', doi: 'https://doi.org/10.1073/pnas.93.12.6079' },
+  simoes2021: { cite: 'Simões et al. (2021) Nat Commun 12:2044', doi: 'https://doi.org/10.1038/s41467-021-22322-w' },
   engel1996: { cite: 'Engel & Wu (1996) J Neurosci 16:3486', doi: 'https://pubmed.ncbi.nlm.nih.gov/8627381/' },
   ueno2017: { cite: 'Ueno et al. (2017) eLife 6:e21076', doi: 'https://elifesciences.org/articles/21076' },
   gibbons2022: { cite: 'Gibbons et al. (2022) Adv Insect Physiol 63:155', doi: 'https://doi.org/10.1016/bs.aiip.2022.10.001' },
@@ -60,6 +61,10 @@ export function runTrial(rig, seed, { settle = 0.4, duration = 0.3, after = 0.3,
   let walkRun = 0;
   const mark = (key, k) => { if (onset[key] === undefined) onset[key] = k; };
   let perMax = 0, perLatency = -1, groomLatency = -1, proboscisSum = 0, dng12Sum = 0, ticks = 0;
+  // How much of each behaviour, not only whether it appeared: time fractions
+  // over the whole observation and distance walked forward (negative when
+  // walking backward) while the stimulus was on.
+  let headGroomTicks = 0, legGroomTicks = 0, backwardTicks = 0, forward = 0;
   const heading0 = rig.fly.heading;
   let headingNet = 0, lastHeading = heading0;
   rig.override = stimulus;
@@ -71,11 +76,12 @@ export function runTrial(rig, seed, { settle = 0.4, duration = 0.3, after = 0.3,
     const f = r.fly;
     if (firstGF < 0 && sim.gfSpikeCount > gf0) firstGF = sim.lastGFSpikeMs - onsetMs;
     if (f.state === 'flying') { tookOff = true; mark('takeoff', k); }
-    if (f.backwardTimer > 0) { backward = true; mark('backward', k); }
+    if (f.backwardTimer > 0) { backward = true; backwardTicks++; mark('backward', k); }
     if (f.state === 'grooming') {
-      if (f.groomMode === 'head') { headGroom = true; mark('headGroom', k); } else { legGroom = true; mark('legGroom', k); }
+      if (f.groomMode === 'head') { headGroom = true; headGroomTicks++; mark('headGroom', k); } else { legGroom = true; legGroomTicks++; mark('legGroom', k); }
       if (groomLatency < 0) groomLatency = (k + 1) / 120;
     }
+    if (k < stimTicks && f.state === 'walking') forward += f.effectiveSpeed / 120;
     // walking counts as a behaviour once it has lasted a quarter second
     if (f.state === 'walking' && f.backwardTimer <= 0) { walkTicks++; walkRun++; if (walkRun >= 30) mark('walk', k - 29); } else walkRun = 0;
     if (f.proboscisExtension > perMax) perMax = f.proboscisExtension;
@@ -88,9 +94,12 @@ export function runTrial(rig, seed, { settle = 0.4, duration = 0.3, after = 0.3,
     if (k < stimTicks) { proboscisSum += sim.rateProboscis; dng12Sum += sim.rateDNg12; ticks++; }
   });
   rig.override = null;
+  const totalTicks = Math.max(1, Math.round(total * 120));
   return {
     gfSpikes: sim.gfSpikeCount - gf0, gfLatencyMs: firstGF, tookOff, backward, headGroom, legGroom,
-    walkFraction: walkTicks / Math.max(1, Math.round(total * 120)), per: perMax > 0.5, perMax, perLatencyS: perLatency,
+    headGroomFraction: headGroomTicks / totalTicks, legGroomFraction: legGroomTicks / totalTicks,
+    backwardFraction: backwardTicks / totalTicks, forward,
+    walkFraction: walkTicks / totalTicks, per: perMax > 0.5, perMax, perLatencyS: perLatency,
     groomLatencyS: groomLatency, proboscisHz: proboscisSum / Math.max(1, ticks), dng12Hz: dng12Sum / Math.max(1, ticks),
     turn: headingNet, onset,
   };
@@ -170,7 +179,7 @@ export const PROTOCOLS = [
           { key: 'takeoffSound', value: pSound.p, format: 'pct' },
           { key: 'takeoffWind', value: pWind.p, format: 'pct' },
           { key: 'fisherP', value: fisher, format: 'p' },
-          { key: 'mannWhitneyP', value: mw.p, format: 'p' },
+          { key: 'mannWhitneyP', value: mw.p, format: 'p', method: mw.method },
         ],
         verdict: mean(sound.map((r) => r.gfSpikes)) > mean(wind.map((r) => r.gfSpikes)) && mw.p < 0.05
           ? { code: 'soundEscapes' } : { code: 'noDifference' },
@@ -275,7 +284,7 @@ export const PROTOCOLS = [
     id: 'opto-screen', category: 'Virtual genetics', icon: 'bolt',
     title: 'Optogenetic activation screen',
     question: 'Switch on one identified cell type at a time. Does each one produce the behaviour it is known for?',
-    measures: 'Behaviour within 1.1 s of a 0.8 s activation, per cell type, against a no-light control.',
+    measures: 'How much of its published behaviour each cell type adds during a 0.8 s activation and 0.3 s after: walking distance, time spent grooming or walking backward, turning while walking, takeoffs, proboscis extensions — each tested against a no-light control (for the steering neurons: DNp09-driven walking).',
     literature: [{ ...LITERATURE.lima2005, finding: 'Activating the giant fiber evokes escape jumps.' },
       { ...LITERATURE.bidaye2014, finding: 'MDN activation drives backward walking.' },
       { ...LITERATURE.bidaye2020, finding: 'Activating DNp09 (P9) drives forward walking.' },
@@ -284,7 +293,25 @@ export const PROTOCOLS = [
       { ...LITERATURE.ache2019, finding: 'LPLC2 activation triggers escape takeoffs.' },
       { ...LITERATURE.hampel2020, finding: 'JO-F activation elicits antennal grooming.' },
       { ...LITERATURE.shiu2024, finding: 'Sugar-neuron activation drives proboscis extension.' }],
-    defaults: { trials: 6 },
+    defaults: { trials: 8 },
+    // After a trial reset the network needs about 0.4 s to reach its resting
+    // activity; a spontaneous behaviour started in that transient would be
+    // credited to the light. 1.5 s is past it.
+    settle: 1.5,
+    // What "more of the published behaviour" means for each: a proportion of
+    // trials (tested with Fisher's exact test) or an amount per trial (tested
+    // with the Mann-Whitney U test). Spontaneous walking and grooming are
+    // frequent, so their mere appearance within a second says little.
+    metrics: {
+      takeoff: { kind: 'proportion', key: 'tookOff' },
+      per: { kind: 'proportion', key: 'per' },
+      walk: { kind: 'amount', key: 'forward', unit: 'units walked forward' },
+      backward: { kind: 'amount', key: 'backwardFraction', unit: 'time walking backward' },
+      legGroom: { kind: 'amount', key: 'legGroomFraction', unit: 'time rubbing legs' },
+      headGroom: { kind: 'amount', key: 'headGroomFraction', unit: 'time grooming the head' },
+      turnLeft: { kind: 'amount', key: 'turn', sign: 1, unit: 'rad turned left while walking' },
+      turnRight: { kind: 'amount', key: 'turn', sign: -1, unit: 'rad turned right while walking' },
+    },
     targets: [
       { key: 'control', population: null, expect: 'none' },
       { key: 'gf', population: 'gf', strength: 0.5, expect: 'takeoff' },
@@ -300,53 +327,67 @@ export const PROTOCOLS = [
       { key: 'joF', population: 'joF', strength: 0.25, expect: 'headGroom' },
       { key: 'sugar', population: 'sugar', strength: 0.2, expect: 'per' },
     ],
-    estimateSeconds: (p) => 11 * p.trials * 1.5,
+    estimateSeconds: (p) => 11 * p.trials * 2.6,
     *run(rig, p, nextSeed) {
       const rows = [];
       const targets = this.targets.filter((tg) => !tg.population || rig.resolvePopulation(tg.population));
+      const byTarget = new Map();
       let done = 0;
-      // Which behaviours appeared at all in a trial.
-      const present = (r) => ({
-        takeoff: r.tookOff, backward: r.backward, headGroom: r.headGroom, legGroom: r.legGroom, per: r.per,
-        walk: r.onset.walk !== undefined, turnLeft: r.turn > 0.6, turnRight: r.turn < -0.6,
-      });
-      const BEHAVIOURS = ['takeoff', 'backward', 'headGroom', 'legGroom', 'per', 'walk', 'turnLeft', 'turnRight'];
-      const results = [];
-      const fractions = {};
       for (const tg of targets) {
-        const counts = Object.fromEntries(BEHAVIOURS.map((b) => [b, 0]));
+        const trials = [];
         for (let i = 0; i < p.trials; i++) {
-          const r = runTrial(rig, nextSeed(), { duration: 0.8, after: 0.3, apply: (rr) => {
+          const r = runTrial(rig, nextSeed(), { settle: this.settle, duration: 0.8, after: 0.3, apply: (rr) => {
             if (!tg.population) return;
             const pop = rr.resolvePopulation(tg.population);
             rr.sim.stimulate(pop.indices, tg.strength, 800);
             if (tg.withWalk) rr.sim.stimulate(rr.sim.fwd, 0.25, 800);
           } });
-          const seen = present(r);
-          for (const b of BEHAVIOURS) if (seen[b]) counts[b]++;
           const { onset: _onset, ...readouts } = r;
-          rows.push({ target: tg.key, trial: i + 1, ...readouts, behaviours: BEHAVIOURS.filter((b) => seen[b]).join('+') || 'none' });
+          trials.push(readouts);
+          rows.push({ target: tg.key, trial: i + 1, ...readouts });
           yield ++done / (targets.length * p.trials);
         }
-        fractions[tg.key] = Object.fromEntries(BEHAVIOURS.map((b) => [b, counts[b] / p.trials]));
-        // An effect is what the light added over its control: the no-light
-        // control, or DNp09-driven walking for the steering neurons.
-        const base = fractions[tg.withWalk ? 'fwd' : 'control'] || fractions.control || {};
-        const evoked = Object.fromEntries(BEHAVIOURS.map((b) => [b, fractions[tg.key][b] - (tg.key === 'control' ? 0 : base[b] || 0)]));
-        const [top, topGain] = Object.entries(evoked).sort((a, b) => b[1] - a[1])[0];
-        const observed = tg.key === 'control' ? 'baseline' : topGain >= 0.25 ? top : 'none';
-        results.push({ target: tg.key, expect: tg.expect, observed, evokedFraction: tg.key === 'control' ? 0 : evoked[tg.expect] ?? 0,
-          expectedFraction: tg.expect === 'none' ? 0 : fractions[tg.key][tg.expect] ?? 0,
-          match: tg.key === 'control' ? true : (evoked[tg.expect] ?? 0) >= 0.34 });
+        byTarget.set(tg.key, trials);
       }
-      const matches = results.filter((r) => r.target !== 'control' && r.match).length;
+      // Each cell type against its control: the no-light control, or
+      // DNp09-driven walking for the steering neurons, which act on a walking fly.
+      const results = [];
+      for (const tg of targets) {
+        if (tg.key === 'control') continue;
+        const metric = this.metrics[tg.expect];
+        const treated = byTarget.get(tg.key), control = byTarget.get(tg.withWalk ? 'fwd' : 'control');
+        const value = (r) => Number(r[metric.key]) * (metric.sign ?? 1);
+        let effect, pValue, treatedValue, controlValue, testMethod;
+        if (metric.kind === 'proportion') {
+          const k1 = treated.filter((r) => r[metric.key]).length, k0 = control.filter((r) => r[metric.key]).length;
+          treatedValue = k1 / treated.length; controlValue = k0 / control.length;
+          effect = treatedValue - controlValue;
+          pValue = fisherExact(k1, treated.length - k1, k0, control.length - k0);
+          testMethod = 'fisher-exact';
+        } else {
+          const a = treated.map(value), b = control.map(value);
+          const mw = mannWhitney(a, b);
+          treatedValue = mean(a); controlValue = mean(b);
+          effect = 2 * mw.u / (a.length * b.length) - 1;   // rank-biserial correlation, -1 … 1
+          pValue = mw.p;
+          testMethod = mw.method;
+        }
+        const match = effect > 0 && pValue < 0.05;
+        results.push({ target: tg.key, expect: tg.expect, observed: match ? tg.expect : 'none', metric: metric.kind === 'proportion' ? 'proportion' : metric.unit,
+          treated: treatedValue, control: controlValue, effect, p: pValue, testMethod, match });
+      }
+      const adjusted = holmAdjusted(results.map((r) => r.p));
+      results.forEach((r, i) => { r.pAdjusted = adjusted[i]; r.matchAdjusted = r.effect > 0 && adjusted[i] < 0.05; });
+      const matches = results.filter((r) => r.match).length;
+      const adjustedMatches = results.filter((r) => r.matchAdjusted).length;
       return {
         rows,
-        table: results.filter((r) => r.target !== "control"),
-        chart: { type: 'bars', xLabel: 'Activated cell type', yLabel: 'Increase over control in the expected behaviour', x: results.filter((r) => r.target !== 'control').map((r) => r.target),
-          series: [{ label: 'Evoked', y: results.filter((r) => r.target !== 'control').map((r) => r.evokedFraction) }] },
-        stats: [{ key: 'matches', value: `${matches}/${results.length - 1}`, format: 'text' }],
-        verdict: { code: 'screen', params: { matches, total: results.length - 1 } },
+        table: results,
+        chart: { type: 'bars', xLabel: 'Activated cell type', yLabel: 'Effect over control in the published behaviour (−1 … 1)', range: [-1, 1], x: results.map((r) => r.target),
+          series: [{ label: 'Effect', y: results.map((r) => r.effect) }] },
+        stats: [{ key: 'matches', value: `${matches}/${results.length}`, format: 'text' },
+          { key: 'matchesAdjusted', value: `${adjustedMatches}/${results.length}`, format: 'text' }],
+        verdict: { code: 'screen', params: { matches, total: results.length } },
       };
     },
   },
@@ -377,7 +418,8 @@ export const PROTOCOLS = [
       const out = conds.map(([label]) => {
         const q = proportion(by(label), 'tookOff');
         const sp = by(label).map((r) => r.gfSpikes);
-        return { label, ...q, spikes: mean(sp), pVsControl: label === 'intact' ? null : mannWhitney(ctlSpikes, sp).p };
+        const mw = label === 'intact' ? null : mannWhitney(ctlSpikes, sp);
+        return { label, ...q, spikes: mean(sp), pVsControl: mw?.p ?? null, testMethod: mw?.method ?? null };
       });
       const ctl = out[0];
       return {
@@ -386,7 +428,7 @@ export const PROTOCOLS = [
           series: [{ label: 'GF spikes', y: out.map((o) => o.spikes), err: conds.map(([label]) => sem(by(label).map((r) => r.gfSpikes))) }],
           secondary: { label: 'Takeoff probability', y: out.map((o) => o.p) } },
         stats: [...out.map((o) => ({ key: 'gfSpikesFor', params: { condition: o.label }, value: o.spikes, format: 'fixed1' })),
-          ...out.slice(1).map((o) => ({ key: 'pVsControlFor', params: { condition: o.label }, value: o.pVsControl, format: 'p' }))],
+          ...out.slice(1).map((o) => ({ key: 'pVsControlFor', params: { condition: o.label }, value: o.pVsControl, format: 'p', method: o.testMethod }))],
         verdict: out[1].pVsControl < 0.05 && out[2].pVsControl < 0.05 && out[1].spikes < ctl.spikes && out[2].spikes < ctl.spikes
           ? { code: 'bothMatter' }
           : out[3].pVsControl < 0.05 && out[3].spikes < ctl.spikes ? { code: 'redundant' } : { code: 'noEffect' },
@@ -441,7 +483,7 @@ export const PROTOCOLS = [
     title: 'Habituation to repeated looms',
     question: 'Does the escape response weaken when the same threat comes again and again?',
     measures: 'Giant-fiber response to 20 identical looming stimuli, 1 s apart, on one individual; fixed wiring versus the experimental learning rule.',
-    literature: [{ ...LITERATURE.engel1996, finding: 'The giant-fiber escape pathway habituates to repeated stimulation in real flies (non-associative learning).' }],
+    literature: [{ ...LITERATURE.engel1996, finding: 'The giant-fiber escape pathway habituates to repeated stimulation in real flies. The decline sits in its afferent pathway in the brain and depends on cAMP signalling (dunce, rutabaga).' }],
     defaults: { trials: 20 },
     estimateSeconds: (p) => 2 * p.trials * 1.0 + 30,
     *run(rig, p, nextSeed) {
@@ -527,7 +569,7 @@ export const PROTOCOLS = [
         chart: { type: 'bars', xLabel: 'Group', yLabel: 'Learning index (post − pre)/(post + pre)', x: ['paired', 'reversed'],
           series: [{ label: 'Learning index', y: [mean(paired), mean(reversed)], err: [sem(paired), sem(reversed)] }] },
         stats: [{ key: 'indexPaired', value: mean(paired), format: 'fixed2' }, { key: 'indexReversed', value: mean(reversed), format: 'fixed2' },
-          { key: 'mannWhitneyP', value: mw.p, format: 'p' }],
+          { key: 'mannWhitneyP', value: mw.p, format: 'p', method: mw.method }],
         verdict: mw.p < 0.05 && mean(paired) > mean(reversed) ? { code: 'learns' } : { code: 'noLearning' },
       };
     },
@@ -538,7 +580,8 @@ export const PROTOCOLS = [
     question: 'Put her in an arena that runs from 18 °C to 32 °C. Does she end up where it is comfortable, as real flies do?',
     measures: 'Time-weighted temperature experienced over several simulated minutes per individual, in the gradient and in a flat 25 °C control arena.',
     literature: [{ ...LITERATURE.sayeed1996, finding: 'Flies in a thermal gradient gather near 24-25 °C.' },
-      { ...LITERATURE.hamada2008, finding: 'Warmth avoidance depends on internal thermosensors (AC neurons) — which are not in this circuit.' }],
+      { ...LITERATURE.hamada2008, finding: 'In shallow gradients, flies slowly avoid warmth using internal warmth sensors in the brain (AC neurons), which are not in this circuit.' },
+      { ...LITERATURE.simoes2021, finding: 'Fast turns away from heat need the antennal hot cells, which are in this circuit; flies compare the temperature at their two antennae.' }],
     defaults: { trials: 3, minutes: 2 },
     estimateSeconds: (p) => 2 * p.trials * p.minutes * 60,
     *run(rig, p, nextSeed) {
@@ -578,7 +621,7 @@ export const PROTOCOLS = [
         chart: { type: 'bars', xLabel: 'Arena', yLabel: 'Fraction of time within ±2 °C of 25 °C', x: ['gradient', 'flat control'],
           series: [{ label: 'Comfort zone', y: [mean(g), mean(f)], err: [sem(g), sem(f)] }] },
         stats: [{ key: 'comfortGradient', value: mean(g), format: 'pct' }, { key: 'comfortFlat', value: mean(f), format: 'pct' },
-          { key: 'mannWhitneyP', value: mw.p, format: 'p' }],
+          { key: 'mannWhitneyP', value: mw.p, format: 'p', method: mw.method }],
         verdict: mw.p < 0.05 && mean(g) > mean(f) ? { code: 'prefers' } : { code: 'noPreference' },
       };
     },

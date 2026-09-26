@@ -9,6 +9,7 @@
 
 import * as THREE from '../../node_modules/three/build/three.module.js';
 import { clampf } from '../../src/util.js';
+import { buildOutgoingEdgeIndex, sampleVisibleEdges } from '../../src/edge-index.js';
 import { t } from '../i18n.js';
 
 const CLASS_COLORS = [
@@ -52,15 +53,34 @@ const SUPER_CLASS_LABELS = {
   motor: 'Motor', endocrine: 'Endocrine',
 };
 
-function pointCloud(positions, colors, size, opacity) {
+// Points with their own size and opacity each. The stock PointsMaterial has one
+// size and opacity per object, so every population was its own draw call (34
+// clouds, plus up to 48 flash spheres): now all populations are one draw call
+// and all flashes another, with the same size, colour and blending maths per
+// point. `round` draws discs — the flashes were unlit spheres, which render as
+// discs; the populations keep the stock square points.
+// Normal alpha compositing preserves anatomical colour and fine structure in
+// dense central regions. Additive blending saturated thousands of overlapping
+// somata into a white patch, hiding the measured positions and live flashes.
+function spritePoints(count, { round = false, blending = THREE.NormalBlending } = {}) {
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  // Normal alpha compositing preserves anatomical colour and fine structure in
-  // dense central regions. Additive blending saturated thousands of overlapping
-  // somata into a white patch, hiding the measured positions and live flashes.
-  return new THREE.Points(g, new THREE.PointsMaterial({ size, sizeAttenuation: true, vertexColors: true,
-    opacity, blending: THREE.NormalBlending, depthWrite: false, depthTest: false, transparent: true }));
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+  g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+  g.setAttribute('pSize', new THREE.BufferAttribute(new Float32Array(count), 1));
+  g.setAttribute('pAlpha', new THREE.BufferAttribute(new Float32Array(count), 1));
+  const m = new THREE.PointsMaterial({ size: 1, sizeAttenuation: true, vertexColors: true,
+    blending, depthWrite: false, depthTest: false, transparent: true });
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('void main() {', 'attribute float pSize;\nattribute float pAlpha;\nvarying float vAlpha;\nvoid main() {\n\tvAlpha = pAlpha;')
+      .replace('gl_PointSize = size;', 'gl_PointSize = size * pSize;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('void main() {', `varying float vAlpha;\nvoid main() {\n\tif ( vAlpha <= 0.0 ) discard;${round
+        ? '\n\tvec2 pc = gl_PointCoord - 0.5;\n\tif ( dot( pc, pc ) > 0.25 ) discard;' : ''}`)
+      .replace('#include <color_fragment>', '#include <color_fragment>\n\tdiffuseColor.a *= vAlpha;');
+  };
+  m.customProgramCacheKey = () => (round ? 'nf-points-round' : 'nf-points');
+  return new THREE.Points(g, m);
 }
 
 export class BrainView {
@@ -77,18 +97,21 @@ export class BrainView {
     this.group.rotation.x = -0.15;
     this.scene.add(this.group);
     const w = Math.max(50, container.clientWidth), h = Math.max(50, container.clientHeight);
+    this.width = container.clientWidth; this.height = container.clientHeight;
     this.camera = new THREE.PerspectiveCamera(46, w / h, 1, 120);
     this.camera.position.set(0, 0.6, 29);
     this.zoom = 29;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    this.maxPixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+    this.pixelRatio = this.maxPixelRatio;
+    this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.setSize(w, h);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(this.renderer.domElement);
     this.renderer.domElement.addEventListener('webglcontextlost', (e) => e.preventDefault(), false);
     this.groups = [];
     this.visible = new Set();
-    this.flashPool = []; this.flashState = []; this.flashNext = 0;
+    this.flashState = []; this.flashNext = 0;
     this.activeGlow = new Set();
     this.fear = 0;
     this.idle = 0; this.hovering = false; this.dragging = false;
@@ -103,7 +126,16 @@ export class BrainView {
 
   _build(points, circuit) {
     const classNames = points?.classes || [];
-    // tier 1: anatomical context, one cloud per real super_class
+    // Every population is a range of one point cloud, drawn in this order:
+    // anatomical context, named populations, unnamed partners.
+    const parts = [];
+    const addGroup = (group, pos, col, size, alpha) => {
+      const gi = this.groups.length;
+      this.groups.push({ ...group, count: pos.length / 3, alpha });
+      parts.push({ gi, pos, col, size });
+      return gi;
+    };
+    // tier 1: anatomical context, one population per real super_class
     const byClass = [];
     for (const p of points?.points || []) {
       if (p.length < 4) continue;
@@ -114,10 +146,8 @@ export class BrainView {
       const pos = new Float32Array(list.length * 3), col = new Float32Array(list.length * 3);
       const c = CLASS_COLORS[ci] || [0.3, 0.3, 0.3];
       list.forEach((p, k) => { pos.set([p[0], p[1], p[2]], 3 * k); col.set(c, 3 * k); });
-      const cloud = pointCloud(pos, col.map((v) => v * 0.55), 0.09, 0.16);
-      this.group.add(cloud);
-      this.groups.push({ key: `bg-${ci}`, tier: 'bg', object: cloud, count: list.length, color: c,
-        label: SUPER_CLASS_LABELS[classNames[ci]] || classNames[ci] || `class ${ci}` });
+      addGroup({ key: `bg-${ci}`, tier: 'bg', color: c, label: SUPER_CLASS_LABELS[classNames[ci]] || classNames[ci] || `class ${ci}` },
+        pos, col.map((v) => v * 0.55), 0.09, 0.16);
     });
     const n = circuit.neurons.length;
     const cpos = new Float32Array(n * 3);
@@ -133,10 +163,8 @@ export class BrainView {
       const color = GROUP_COLORS[spec.key];
       const pos = new Float32Array(idx.length * 3), col = new Float32Array(idx.length * 3);
       idx.forEach((i, k) => { pos.set(cpos.subarray(3 * i, 3 * i + 3), 3 * k); col.set(color, 3 * k); });
-      const cloud = pointCloud(pos, col, spec.key.endsWith('Relay') ? 0.3 : 0.42, 0.85);
-      this.group.add(cloud);
-      const gi = this.groups.length;
-      this.groups.push({ key: spec.key, tier: 'named', object: cloud, count: idx.length, color, label: spec.label, rate: spec.rate, indices: idx });
+      const gi = addGroup({ key: spec.key, tier: 'named', color, label: spec.label, rate: spec.rate, indices: idx },
+        pos, col, spec.key.endsWith('Relay') ? 0.3 : 0.42, 0.85);
       for (const i of idx) this.groupOf[i] = gi;
     }
     // tier 3: unnamed partners grouped by their real super_class
@@ -152,22 +180,32 @@ export class BrainView {
       const c = ci >= 0 ? (CLASS_COLORS[ci] || [0.45, 0.45, 0.5]) : [0.45, 0.45, 0.5];
       const pos = new Float32Array(idx.length * 3), col = new Float32Array(idx.length * 3);
       idx.forEach((i, k) => { pos.set(cpos.subarray(3 * i, 3 * i + 3), 3 * k); col.set(c, 3 * k); });
-      const cloud = pointCloud(pos, col.map((v) => v * 0.7), 0.2, 0.42);
-      this.group.add(cloud);
-      const gi = this.groups.length;
-      this.groups.push({ key: `other-${type}`, tier: 'other', object: cloud, count: idx.length, color: c,
-        label: SUPER_CLASS_LABELS[type] || type, suffix: 'unnamed partners', indices: idx });
+      const gi = addGroup({ key: `other-${type}`, tier: 'other', color: c, label: SUPER_CLASS_LABELS[type] || type,
+        suffix: 'unnamed partners', indices: idx }, pos, col.map((v) => v * 0.7), 0.2, 0.42);
       for (const i of idx) this.groupOf[i] = gi;
     }
+    this.cloud = spritePoints(parts.reduce((s, p) => s + p.pos.length / 3, 0));
+    const ca = this.cloud.geometry.attributes;
+    let at = 0;
+    for (const p of parts) {
+      const g = this.groups[p.gi];
+      g.start = at;
+      ca.position.array.set(p.pos, 3 * at);
+      ca.color.array.set(p.col, 3 * at);
+      ca.pSize.array.fill(p.size, at, at + g.count);
+      ca.pAlpha.array.fill(g.alpha, at, at + g.count);
+      at += g.count;
+    }
+    this.cloud.geometry.computeBoundingSphere();
+    this.group.add(this.cloud);
     this.groups.forEach((_, gi) => this.visible.add(gi));
 
     // synapses: every edge can glow when it carries a spike; a deterministic
     // stride sample is drawn permanently as the resting web
     const edges = circuit.edges;
     this.edgeFrom = new Int32Array(edges.length); this.edgeTo = new Int32Array(edges.length); this.edgeExc = new Uint8Array(edges.length);
-    const out = Array.from({ length: n }, () => []);
-    edges.forEach((e, k) => { this.edgeFrom[k] = e[0]; this.edgeTo[k] = e[1]; this.edgeExc[k] = e[2] >= 0 ? 1 : 0; out[e[0]].push(k); });
-    this.outEdges = out.map((a) => Int32Array.from(a));
+    edges.forEach((e, k) => { this.edgeFrom[k] = e[0]; this.edgeTo[k] = e[1]; this.edgeExc[k] = e[2] >= 0 ? 1 : 0; });
+    this.outEdges = buildOutgoingEdgeIndex(this.edgeFrom, n);
     this.edgeGlow = new Float32Array(edges.length);
     this.synapseLines = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.055, depthWrite: false }));
     this.group.add(this.synapseLines);
@@ -191,14 +229,20 @@ export class BrainView {
     });
     this.isGF = new Uint8Array(n);
     circuit.neurons.forEach((nr, i) => { if (nr.role === 'gf') this.isGF[i] = 1; });
-    const flashGeo = new THREE.SphereGeometry(0.16, 10, 8);
-    for (let i = 0; i < 48; i++) {
-      const node = new THREE.Mesh(flashGeo, this._flashMat([0.75, 1.0, 0.85]));
-      node.visible = false;
-      this.group.add(node);
-      this.flashPool.push(node);
+    // Spike flashes, up to 48 at once: discs as large on screen as the former
+    // unlit spheres (radius 0.16, x3.2 for the giant fiber). A size-attenuated
+    // point of size s spans s/tan(fov/2) of what a sphere of diameter s spans.
+    this.FLASHES = 48;
+    this.flashSize = 0.32 / Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2);
+    this.flashPoints = spritePoints(this.FLASHES, { round: true, blending: THREE.AdditiveBlending });
+    this.flashPoints.frustumCulled = false;   // positions change with every spike
+    const fc = new THREE.Color().setRGB(0.75, 1.0, 0.85, THREE.SRGBColorSpace);
+    const fcol = this.flashPoints.geometry.attributes.color.array;
+    for (let i = 0; i < this.FLASHES; i++) {
+      fcol[3 * i] = fc.r; fcol[3 * i + 1] = fc.g; fcol[3 * i + 2] = fc.b;
       this.flashState.push({ ttl: 0, dur: 1, peak: 1 });
     }
+    this.group.add(this.flashPoints);
     // A giant-fiber event should read as a contour, not an opaque white ball
     // that hides the cells and connections underneath it.
     const rm = this._flashMat([1.0, 0.9, 0.5]); rm.opacity = 0.18; rm.side = THREE.DoubleSide; rm.wireframe = true;
@@ -222,25 +266,20 @@ export class BrainView {
   // A 5,000-line context sample avoids opaque overlap while preserving the
   // measured topology; activity still lights the exact outgoing model edges.
   rebuildAmbient(cap = 5000) {
-    const total = this.edgeFrom.length;
-    const filtered = [];
-    for (let k = 0; k < total; k++) {
-      if (this.visible.has(this.groupOf[this.edgeFrom[k]]) && this.visible.has(this.groupOf[this.edgeTo[k]])) filtered.push(k);
-    }
-    const stride = Math.max(1, Math.ceil(filtered.length / cap));
-    const count = Math.ceil(filtered.length / stride);
+    const visible = new Uint8Array(this.groups.length);
+    for (const gi of this.visible) visible[gi] = 1;
+    const selected = sampleVisibleEdges(this.edgeFrom, this.edgeTo, this.groupOf, visible, cap);
+    const count = selected.length;
     const pos = new Float32Array(count * 6), col = new Float32Array(count * 6);
     const p = this.positions;
-    let a = 0;
-    for (let f = 0; f < filtered.length; f += stride) {
-      const k = filtered[f], i = this.edgeFrom[k], j = this.edgeTo[k];
+    for (let a = 0; a < count; a++) {
+      const k = selected[a], i = this.edgeFrom[k], j = this.edgeTo[k];
       pos.set(p.subarray(3 * i, 3 * i + 3), 6 * a); pos.set(p.subarray(3 * j, 3 * j + 3), 6 * a + 3);
       const base = !this.edgeSignKnown ? [0.2, 0.48, 0.52] : this.edgeExc[k] ? [0.12, 0.55, 0.3] : [0.62, 0.2, 0.24];
       const gi = this.groupOf[i];
       const path = gi >= 0 && this.groups[gi].tier === 'named' ? this.groups[gi].color : base;
       const c = [0, 1, 2].map((q) => base[q] + (path[q] - base[q]) * 0.4);
       col.set(c, 6 * a); col.set(c, 6 * a + 3);
-      a++;
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -252,9 +291,31 @@ export class BrainView {
   setGroupVisible(gi, on) {
     const g = this.groups[gi];
     if (!g) return;
-    g.object.visible = on;
     if (on) this.visible.add(gi); else this.visible.delete(gi);
+    this._paintGroup(gi);
     if (g.tier !== 'bg') this.rebuildAmbient();
+  }
+
+  // A population's points carry its opacity, or 0 while it is switched off.
+  _paintGroup(gi) {
+    const g = this.groups[gi], a = this.cloud.geometry.attributes.pAlpha;
+    a.array.fill(this.visible.has(gi) ? g.alpha : 0, g.start, g.start + g.count);
+    a.needsUpdate = true;
+  }
+
+  // Films give each population its own opacity instead of its tier's default.
+  setGroupOpacity(gi, alpha) {
+    const g = this.groups[gi];
+    if (!g) return;
+    g.alpha = alpha;
+    this._paintGroup(gi);
+  }
+
+  clearFlashes() {
+    for (const st of this.flashState) st.ttl = 0;
+    const a = this.flashPoints.geometry.attributes.pAlpha;
+    a.array.fill(0);
+    a.needsUpdate = true;
   }
 
   setSynapsesVisible(on) {
@@ -304,8 +365,9 @@ export class BrainView {
     // an even sample: at most 48 for the named command/sensory populations,
     // 12 for their unnamed partners. All of them at once would paint the
     // whole view white and hide where the signal is going.
-    const edges = this.outEdges[i];
     const gOwn = this.groupOf[i];
+    if (gOwn >= 0 && !this.visible.has(gOwn)) return;
+    const edges = this.outEdges[i];
     const sample = gOwn >= 0 && this.groups[gOwn].tier === 'named' ? 48 : 12;
     const stride = Math.max(1, Math.ceil(edges.length / sample));
     for (let q = 0; q < edges.length; q += stride) {
@@ -314,19 +376,16 @@ export class BrainView {
       this.edgeGlow[e] = 1;
       this.activeGlow.add(e);
     }
-    const gi = this.groupOf[i];
-    if (gi >= 0 && !this.visible.has(gi)) return;
     const idx = this.flashNext;
-    this.flashNext = (this.flashNext + 1) % this.flashPool.length;
-    const node = this.flashPool[idx];
+    this.flashNext = (this.flashNext + 1) % this.FLASHES;
+    const a = this.flashPoints.geometry.attributes;
     const p = this.positions;
-    node.position.set(p[3 * i], p[3 * i + 1], p[3 * i + 2]);
-    node.visible = true;
-    node.material.opacity = gf ? 1 : 0.8;
-    const s = gf ? 3.2 : 1;
-    node.scale.set(s, s, s);
+    a.position.array[3 * idx] = p[3 * i]; a.position.array[3 * idx + 1] = p[3 * i + 1]; a.position.array[3 * idx + 2] = p[3 * i + 2];
     const st = this.flashState[idx];
-    st.ttl = gf ? 0.6 : 0.28; st.dur = st.ttl; st.peak = node.material.opacity;
+    st.ttl = gf ? 0.6 : 0.28; st.dur = st.ttl; st.peak = gf ? 1 : 0.8;
+    a.pSize.array[idx] = this.flashSize * (gf ? 3.2 : 1);
+    a.pAlpha.array[idx] = st.peak;
+    a.position.needsUpdate = true; a.pSize.needsUpdate = true; a.pAlpha.needsUpdate = true;
     if (gf) this.flashRing(p[3 * i], p[3 * i + 1], p[3 * i + 2]);
   }
 
@@ -355,8 +414,9 @@ export class BrainView {
     if (this.last === null) { this.last = t0; return; }
     this.pending += Math.min(0.05, t0 - this.last);
     this.last = t0;
-    const w = this.container.clientWidth, h = this.container.clientHeight;
-    if (!w || !h) { this.pending = 0; return; }
+    // The size comes from a ResizeObserver: reading it here would force a
+    // synchronous layout every frame while the panels are changing the page.
+    if (!this.width || !this.height) { this.pending = 0; return; }
     // Full rate while being handled, 30 Hz otherwise: an observation surface,
     // and no simulated value depends on how often it is drawn.
     if (!this.dragging && !this.hovering && this.pending < 1 / 30) return;
@@ -370,13 +430,16 @@ export class BrainView {
     this.scene.background.setRGB(0.028 + (0.085 - 0.028) * k, 0.04 + (0.03 - 0.04) * k, 0.038 + (0.036 - 0.038) * k, THREE.SRGBColorSpace);
     this.idle += dt;
     if (!this.dragging && (!this.hovering || this.idle > 4) && this.idle > 2) this.group.rotation.y += (0.35 / 6) * dt;
-    for (let i = 0; i < this.flashPool.length; i++) {
+    const fa = this.flashPoints.geometry.attributes.pAlpha;
+    let lit = false;
+    for (let i = 0; i < this.FLASHES; i++) {
       const st = this.flashState[i];
       if (st.ttl <= 0) continue;
       st.ttl -= dt;
-      if (st.ttl <= 0) { this.flashPool[i].visible = false; continue; }
-      this.flashPool[i].material.opacity = st.peak * (st.ttl / st.dur);
+      fa.array[i] = st.ttl <= 0 ? 0 : st.peak * (st.ttl / st.dur);
+      lit = true;
     }
+    if (lit) fa.needsUpdate = true;
     if (this.ringT > 0) {
       this.ringT -= dt;
       const q = Math.max(0, this.ringT / 0.55);
@@ -427,10 +490,18 @@ export class BrainView {
 
   resize() {
     const w = this.container.clientWidth, h = this.container.clientHeight;
+    this.width = w; this.height = h;
     if (!w || !h) return;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
+  }
+
+  setPixelRatio(ratio) {
+    const next = Math.max(0.75, Math.min(this.maxPixelRatio, ratio));
+    if (Math.abs(next - this.pixelRatio) < 0.001) return;
+    this.pixelRatio = next;
+    this.renderer.setPixelRatio(next);
   }
 
   _bind() {

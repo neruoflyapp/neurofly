@@ -28,6 +28,12 @@ export const EDGE_MARGIN = 50;
 export const EDGE_CLAMP = 45;
 export const SCARE_RADIUS = 110;     // legacy behavior (non-connectome flies) only
 export const NERVOUS_RADIUS = 240;   // legacy behavior only
+// Walking drive (DNp09 rate / 10 Hz) at which walking can break off grooming,
+// and how long it must be held. Unstimulated, DNp09 crosses 10 Hz only in
+// flickers (live terrarium, 3 x 90 s: 59 times, median 0.025 s, never
+// 0.25 s); activating it holds the rate at 140-230 Hz.
+export const WALK_OVERRIDES_GROOMING = 1.0;
+export const WALK_OVERRIDE_HOLD_S = 0.25;
 
 // Heading random-walk amplitude, rad/sqrt(s). The variance of a random walk
 // grows with dt, not dt^2, so the old `rnd(-1, 1) * 1.6 * dt` form made the
@@ -339,6 +345,7 @@ export class Fly {
     this.saccadeRate = 0;
     this.dartTimer = 0;
     this.stateAge = 0;
+    this.walkCommandHeld = 0;   // s the walking drive has stayed >= WALK_OVERRIDES_GROOMING
     this.terrain = [];      // walkable window edges, set by the coordinator
     this.ledge = null;      // currently attached window edge
     // Scene-space rects of the real displays. The overlay spans the whole
@@ -544,6 +551,7 @@ export class Fly {
     this.brainLive = !!signals;
     this.liveArousal = signals ? signals.arousal : 0;
     this.liveWing = signals ? signals.wingDrive : 0;
+    this.walkCommandHeld = (signals?.walkDrive ?? 0) >= WALK_OVERRIDES_GROOMING ? this.walkCommandHeld + dt : 0;
     const tempo = signals?.tempo ?? 1;
     const motorTempo = Number.isFinite(tempo) ? clampf(tempo, 0.5, 2) : 1;
     const motorDT = dt * motorTempo;
@@ -675,15 +683,28 @@ export class Fly {
     // Grooming command hysteresis: DNg12 (head sweeps + leg rubbing) takes
     // precedence over DNg11 (leg rubbing only) when both are active.
     const headDrive = s.headGroomDrive ?? 0;
+    // Walking and grooming are exclusive motor programs under different
+    // descending commands. When both commands are up, the stronger one wins
+    // (a winner-take-all arbitration: model assumption). The walking command
+    // must be clearly and steadily active for that, DNp09 at >= 10 Hz (five
+    // times its resting rate) for WALK_OVERRIDE_HOLD_S, so a spontaneous
+    // flicker of it does not break off a grooming bout; sustained DNp09
+    // activation does, as in real flies.
+    const walkWins = this.walkCommandHeld >= WALK_OVERRIDE_HOLD_S && s.walkDrive > Math.max(headDrive, s.groomDrive);
     if (this.state !== 'walking' || this.dartTimer === 0) {
       const wantsHead = headDrive > 0.5, wantsLegs = s.groomDrive > 0.5;
-      if (this.state !== 'grooming' && (wantsHead || wantsLegs) && s.nervous < 0.3 && this.stateAge > 0.4) {
+      if (this.state !== 'grooming' && (wantsHead || wantsLegs) && !walkWins && s.nervous < 0.3 && this.stateAge > 0.4) {
         this.setState('grooming');
         this.groomMode = wantsHead ? 'head' : 'legs';
       } else if (this.state === 'grooming') {
-        if (wantsHead) this.groomMode = 'head';
-        else if (this.groomMode === 'head' && headDrive < 0.25) this.groomMode = 'legs';
-        if (headDrive < 0.25 && s.groomDrive < 0.3 && this.stateAge > 0.6) this.setState('idle');
+        if (walkWins && this.stateAge > 0.4) {
+          this.setState('walking');
+          this.startSaccade();
+        } else {
+          if (wantsHead) this.groomMode = 'head';
+          else if (this.groomMode === 'head' && headDrive < 0.25) this.groomMode = 'legs';
+          if (headDrive < 0.25 && s.groomDrive < 0.3 && this.stateAge > 0.6) this.setState('idle');
+        }
       }
     }
     // DNp09 (forward-walking command) hysteresis

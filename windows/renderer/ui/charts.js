@@ -1,11 +1,33 @@
 // charts.js — canvas drawing for the live oscilloscope and experiment results.
 // Plain 2D canvas, crisp at any device pixel ratio, themed from CSS variables.
 
-const css = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+// Theme colours are fixed for the page's lifetime; reading them from the
+// computed style on every draw forced a style recalculation each time.
+const cssCache = new Map();
+const css = (name, fallback) => {
+  if (!cssCache.has(name)) cssCache.set(name, getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback);
+  return cssCache.get(name);
+};
+
+// Canvas sizes come from a ResizeObserver: reading clientWidth while other
+// parts of the page have just changed forces a synchronous layout, and the
+// oscilloscope draws twenty times a second.
+const canvasSize = new WeakMap();
+const sizeObserver = typeof ResizeObserver === 'function'
+  ? new ResizeObserver((entries) => {
+    for (const e of entries) canvasSize.set(e.target, { w: e.contentRect.width, h: e.contentRect.height });
+  })
+  : null;
 
 function fitCanvas(canvas) {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const w = Math.max(10, canvas.clientWidth), h = Math.max(10, canvas.clientHeight);
+  let size = canvasSize.get(canvas);
+  if (!size) {
+    size = { w: canvas.clientWidth, h: canvas.clientHeight };
+    canvasSize.set(canvas, size);
+    sizeObserver?.observe(canvas);
+  }
+  const w = Math.max(10, size.w), h = Math.max(10, size.h);
   if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
     canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
   }
@@ -112,19 +134,34 @@ export function drawResult(canvas, chart, { t = (s) => s } = {}) {
   const colors = [accent, second, '#ffb347', '#ff6b8b'];
   const pad = { l: 46, r: 14, t: 14, b: 38 };
   const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
-  let yMax = 0;
-  for (const s of chart.series) for (let i = 0; i < s.y.length; i++) yMax = Math.max(yMax, s.hi?.[i] ?? 0, (s.y[i] ?? 0) + (s.err?.[i] ?? 0));
+  let yMax = 0, yMin = 0;
+  for (const s of chart.series) {
+    for (let i = 0; i < s.y.length; i++) {
+      yMax = Math.max(yMax, s.hi?.[i] ?? 0, (s.y[i] ?? 0) + (s.err?.[i] ?? 0));
+      yMin = Math.min(yMin, s.lo?.[i] ?? 0, (s.y[i] ?? 0) - (s.err?.[i] ?? 0));
+    }
+  }
   if (chart.markers) for (const m of chart.markers) yMax = Math.max(yMax, m.y);
   const probability = /probab|P\(|fraction|Fraction|increase|Increase/i.test(chart.yLabel);
-  yMax = probability ? 1 : (yMax > 0 ? yMax * 1.12 : 1);
-  const Y = (v) => pad.t + ph - (v / yMax) * ph;
+  if (chart.range) [yMin, yMax] = chart.range;
+  else {
+    yMax = probability ? 1 : (yMax > 0 ? yMax * 1.12 : 1);
+    yMin = probability ? 0 : (yMin < 0 ? yMin * 1.12 : 0);
+  }
+  const Y = (v) => pad.t + ph - ((v - yMin) / (yMax - yMin)) * ph;
   ctx.font = '11px "Segoe UI Variable", "Segoe UI", sans-serif';
   ctx.strokeStyle = grid; ctx.fillStyle = muted; ctx.lineWidth = 1;
   for (let k = 0; k <= 4; k++) {
-    const v = (yMax * k) / 4, y = Y(v);
+    const v = yMin + ((yMax - yMin) * k) / 4, y = Y(v);
     ctx.beginPath(); ctx.moveTo(pad.l, y + 0.5); ctx.lineTo(w - pad.r, y + 0.5); ctx.stroke();
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    ctx.fillText(probability ? `${Math.round(v * 100)}%` : v.toFixed(v < 10 ? 1 : 0), pad.l - 6, y);
+    ctx.fillText(probability ? `${Math.round(v * 100)}%` : v.toFixed(Math.abs(v) < 10 ? 1 : 0), pad.l - 6, y);
+  }
+  if (yMin < 0) {
+    // the zero line, where "no effect" sits
+    ctx.strokeStyle = muted; ctx.globalAlpha = 0.7;
+    ctx.beginPath(); ctx.moveTo(pad.l, Y(0) + 0.5); ctx.lineTo(w - pad.r, Y(0) + 0.5); ctx.stroke();
+    ctx.globalAlpha = 1;
   }
   ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
   ctx.fillText(t(chart.xLabel), pad.l + pw / 2, h - 4);
@@ -174,14 +211,15 @@ export function drawResult(canvas, chart, { t = (s) => s } = {}) {
         const v = s.y[i] ?? 0;
         const color = colors[si % colors.length];
         ctx.fillStyle = color; ctx.globalAlpha = 0.85;
-        ctx.fillRect(x + 2, Y(v), bw - 4, pad.t + ph - Y(v));
+        const top = Y(Math.max(v, 0)), bottom = Y(Math.min(v, 0));
+        ctx.fillRect(x + 2, top, bw - 4, Math.max(1, bottom - top));
         ctx.globalAlpha = 1;
         const lo = s.lo ? s.lo[i] : s.err ? v - s.err[i] : null;
         const hi = s.hi ? s.hi[i] : s.err ? v + s.err[i] : null;
         if (Number.isFinite(lo) && Number.isFinite(hi)) {
           ctx.strokeStyle = ink; ctx.lineWidth = 1.2;
           const cx = x + bw / 2;
-          ctx.beginPath(); ctx.moveTo(cx, Y(Math.max(0, lo))); ctx.lineTo(cx, Y(hi)); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(cx, Y(Math.max(yMin, lo))); ctx.lineTo(cx, Y(hi)); ctx.stroke();
           ctx.beginPath(); ctx.moveTo(cx - 4, Y(hi)); ctx.lineTo(cx + 4, Y(hi)); ctx.stroke();
         }
       });

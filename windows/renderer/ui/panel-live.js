@@ -2,7 +2,7 @@
 
 import { h, icon } from './dom.js';
 import { t, num } from '../i18n.js';
-import { panelHead, card, action, meter, slider, check, tag } from './widgets.js';
+import { panelHead, card, action, meter, slider, check, tag, setText } from './widgets.js';
 import { behaviourOf } from './labels.js';
 import { mapColor } from '../view/terrarium.js';
 
@@ -80,9 +80,9 @@ export const livePanel = {
       el,
       update(snap) {
         const b = behaviourOf(snap);
-        glyph.replaceChildren(icon(b.icon, 22));
-        stateName.textContent = b.label;
-        stateSub.textContent = `${t('fly')} #${snap.individual} · ${t('seed')} ${snap.seed}`;
+        if (glyph.dataset.icon !== b.icon) { glyph.dataset.icon = b.icon; glyph.replaceChildren(icon(b.icon, 22)); }
+        setText(stateName, b.label);
+        setText(stateSub, `${t('fly')} #${snap.individual} · ${t('seed')} ${snap.seed}`);
         const r = snap.rates;
         meters.walk.set(r.fwd / 15, `${num(r.fwd, 1)} Hz`);
         meters.escape.set(r.gf / 40, `${num(r.gf, 1)} Hz`);
@@ -100,7 +100,7 @@ export const livePanel = {
               ? ` · ${t('about 10 min are needed before a spatial preference can be read')}`
               : ` · ${t('{pct}% of her time in the half with the lower values', { pct: Math.round(m.preference * 100) })}`;
           }
-          mapInfo.textContent = text;
+          setText(mapInfo, text);
         }
       },
     };

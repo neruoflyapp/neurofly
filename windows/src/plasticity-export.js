@@ -48,6 +48,8 @@ export const PLASTICITY_EXPORT_COLUMNS = Object.freeze([
   'post_sensory_group',
   'pre_thermo_group',
   'post_thermo_group',
+  'effective_weight',
+  'transmitter_gain',
 ]);
 
 function cell(value) {
@@ -113,7 +115,7 @@ export function plasticityChangesCSV({
       plasticity?.maxRelativeChange,
       neuralTimeMs,
       'cumulative-since-neural-restart',
-      'LIF-model-weight-not-anatomical-synapse-count',
+      `LIF-model-weight-not-anatomical-synapse-count${plasticity?.weightBasis ? `; ${plasticity.weightBasis}` : ''}`,
       'latest-intervention-not-per-contact-causal-attribution',
       Array.isArray(protocolHistory) ? protocolHistory.length : null,
       protocol?.id,
@@ -132,6 +134,10 @@ export function plasticityChangesCSV({
       post?.sensoryGroup,
       pre?.thermoGroup,
       post?.thermoGroup,
+      // initial/current_weight describe learning itself. A reversible dose
+      // modifies transmission, recorded separately, including a complete block.
+      change.effectiveWeight,
+      change.transmitterGain,
     ].map(cell).join(','));
   }
   return `${lines.join('\n')}\n`;

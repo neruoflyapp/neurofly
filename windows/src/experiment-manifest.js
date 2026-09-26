@@ -113,6 +113,8 @@ export function makeExperimentManifest({
       potentiations: finiteNumber(plasticity?.potentiations),
       depressions: finiteNumber(plasticity?.depressions),
       meanAbsRelativeChange: finiteNumber(plasticity?.meanAbsRelativeChange),
+      weightBasis: plasticity?.weightBasis ?? null,
+      blockedClassLearning: plasticity?.blockedClassLearning ?? null,
       changeScope: 'cumulative-since-neural-restart',
     }),
     // Stimulus schedules are interventions, not proof that they caused every
@@ -128,6 +130,7 @@ export function makeExperimentManifest({
       coreRealtime: finiteNumber(performance?.coreRealtime),
       droppedSecondsPerSecond: finiteNumber(performance?.droppedSecondsPerSecond),
       totalDroppedSimulationSeconds: finiteNumber(performance?.totalDroppedSimulationSeconds),
+      runDroppedSimulationSeconds: finiteNumber(performance?.runDroppedSimulationSeconds),
     }),
   });
 }

@@ -38,8 +38,8 @@ export class SimClient {
     }
   }
 
-  init(data, bounds, seed, ambient) {
-    this.worker.postMessage({ type: 'init', data, bounds, seed, ambient });
+  init(data, bounds, seed, ambient, { startPaused = false } = {}) {
+    this.worker.postMessage({ type: 'init', data, bounds, seed, ambient, startPaused });
     return this.ready;
   }
 

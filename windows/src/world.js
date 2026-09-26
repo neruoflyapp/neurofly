@@ -18,15 +18,20 @@
 // it only decides *when* the real circuit gets stimulated.
 
 import * as THREE from '../node_modules/three/build/three.module.js';
-import { clampf, fmod } from './util.js';
+import { clampf, fmod, random } from './util.js';
 import { mat, SHADOWS_ENABLED } from './flymodel.js';
 
-// All of the terrarium's randomness goes through R. Placement draws from the
-// platform RNG (tests seed Math.random), but each object's own dressing —
-// rotations, petal colours, clump offsets — comes from a per-object seed, so
-// a second process (the renderer, while the simulation runs in a worker) can
-// rebuild exactly the same-looking object from its layout record.
-let R = () => Math.random();
+// All of the terrarium's randomness goes through R. Placement draws from
+// util's random(): inside the simulation that is the loop's seeded stream
+// (ClosedLoop's withRandom), so a session is reproducible from its seed; the
+// renderer installs no stream and gets the platform RNG. Each object's own
+// dressing — rotations, petal colours, clump offsets — comes from a
+// per-object seed, so a second process (the renderer, while the simulation
+// runs in a worker) can rebuild exactly the same-looking object from its
+// layout record.
+let R = () => random();
+// Time constant (s) with which a firefly steers onto a new course (modelled).
+const FIREFLY_TURN_S = 0.35;
 const rnd = (lo, hi) => lo + R() * (hi - lo);
 function seededRandom(seed) {
   let state = (seed >>> 0) || 0x9e3779b9;
@@ -415,6 +420,52 @@ function buildFirefly(radius) {
   return { node: group, light, glow };
 }
 
+// Rendering only: the parts of one object that share a material (petals,
+// grass blades, fern fronds, berries, bush clumps) become a single mesh with
+// the same triangles, so the object costs one draw call per material instead
+// of one per part. The object still moves as a whole; its own transform stays
+// on the root. Only opaque parts are merged: transparent ones are sorted per
+// mesh when drawn, and merging them would change that order.
+export function mergeByMaterial(root) {
+  if (!root.isGroup) return root;
+  root.updateMatrixWorld(true);
+  const toRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const byMaterial = new Map();
+  root.traverse((o) => {
+    if (!o.isMesh || o.material.transparent) return;
+    if (!byMaterial.has(o.material)) byMaterial.set(o.material, []);
+    byMaterial.get(o.material).push(o);
+  });
+  for (const [material, meshes] of byMaterial) {
+    if (meshes.length < 2) continue;
+    const parts = meshes.map((m) => {
+      const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+      return g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(toRoot, m.matrixWorld));
+    });
+    const names = Object.keys(parts[0].attributes);
+    if (!parts.every((g) => Object.keys(g.attributes).join() === names.join())) continue;
+    const merged = new THREE.BufferGeometry();
+    for (const name of names) {
+      const itemSize = parts[0].attributes[name].itemSize;
+      const out = new Float32Array(parts.reduce((s, g) => s + g.attributes[name].array.length, 0));
+      let at = 0;
+      for (const g of parts) { out.set(g.attributes[name].array, at); at += g.attributes[name].array.length; }
+      merged.setAttribute(name, new THREE.BufferAttribute(out, itemSize));
+    }
+    const mesh = new THREE.Mesh(merged, material);
+    mesh.castShadow = meshes[0].castShadow;
+    mesh.receiveShadow = meshes[0].receiveShadow;
+    for (const m of meshes) { m.parent.remove(m); m.geometry.dispose(); }
+    for (const g of parts) g.dispose();
+    root.add(mesh);
+  }
+  // groups left without meshes (a fern's frond groups) are dropped
+  const empty = [];
+  root.traverse((o) => { if (o !== root && o.isGroup && !o.children.length) empty.push(o); });
+  for (const g of empty) g.parent.remove(g);
+  return root;
+}
+
 // solid: blocks movement and can startle on contact. draggable: any solid
 // object can be picked up in app.js's pointer handlers (non-solid ones too,
 // see app.js — solidity is a collision property, not a grabbability one).
@@ -493,9 +544,12 @@ export class World {
   //   layout()); options.empty: a bare arena with no objects, for controlled
   //   experiments; options.dressing: false skips ground, walls and landscape,
   //   which carry no behaviour (a simulation-only world).
-  constructor(bounds, { layout = null, empty = false, dressing = true } = {}) {
+  //   options.merge: draw each object with one mesh per material
+  //   (mergeByMaterial; for the renderer's copy).
+  constructor(bounds, { layout = null, empty = false, dressing = true, merge = false } = {}) {
     this.node = new THREE.Group();
     this.dressing = dressing;
+    this.merge = merge;   // renderer copies merge each object's parts per material
     this.landscapeSeed = layout?.landscapeSeed ?? Math.floor(R() * 0x100000000);
     if (dressing) this._buildDressing(bounds);
     this.objects = [];
@@ -540,6 +594,7 @@ export class World {
       const spec = OBSTACLE_SPECS[r.spec];
       if (!spec) continue;
       const mesh = withSeed(r.seed, () => spec.build(r.radius));
+      if (this.merge) mergeByMaterial(mesh);
       mesh.position.x = r.x; mesh.position.y = r.y;
       this.node.add(mesh);
       this.objects.push({ kind: r.kind, spec: r.spec, seed: r.seed, pos: { x: r.x, y: r.y }, radius: r.radius,
@@ -550,12 +605,14 @@ export class World {
   // The renderer's copy follows the simulation's: positions, firefly height,
   // flash and daylight dimming, packed as [x, y, z, glow, dim] per object.
   applyState(packed) {
+    let moved = false;
     for (let k = 0; k < this.objects.length; k++) {
       const o = this.objects[k];
       const b = 5 * k;
       if (b + 4 >= packed.length) break;
       o.pos.x = packed[b]; o.pos.y = packed[b + 1];
       o.mesh.position.x = o.pos.x; o.mesh.position.y = o.pos.y;
+      if (o.batchedAt && !o.loose && Math.abs(o.pos.x - o.batchedAt.x) + Math.abs(o.pos.y - o.batchedAt.y) > 0.01) { o.loose = true; moved = true; }
       if (o.kind === 'firefly') {
         o.z = packed[b + 2];
         o.mesh.position.z = o.z;
@@ -564,6 +621,66 @@ export class World {
         this._paintFirefly(o);
       }
     }
+    this.syncBatch(moved);
+  }
+
+  // Renderer copy only (merge): the opaque parts of every object that stands
+  // still are merged per look (material type, colours, shading, shadows) across
+  // objects, so the scenery costs a few draw calls in each of the shadow, view
+  // and eye passes instead of one per part. The parts stay in their objects,
+  // hidden; the same triangles are drawn. An object that moves (dragged) leaves
+  // the batch and is drawn on its own again.
+  _batchStatic() {
+    if (this.batch) { this.node.remove(this.batch); this.batch.traverse((m) => m.geometry?.dispose()); }
+    for (const part of this.batchedParts || []) part.visible = true;
+    this.batch = new THREE.Group();
+    this.batchedParts = [];
+    this.node.updateMatrixWorld(true);
+    const toNode = new THREE.Matrix4().copy(this.node.matrixWorld).invert();
+    const looks = new Map();
+    for (const o of this.objects) {
+      if (o.kind === 'firefly' || o.loose) continue;
+      o.batchedAt = { x: o.pos.x, y: o.pos.y };
+      o.mesh.traverse((m) => {
+        if (!m.isMesh || !m.visible) return;
+        const t = m.material;
+        if (Array.isArray(t) || t.transparent || t.map || t.vertexColors) return;
+        const key = [t.type, t.color?.getHexString(), t.specular?.getHexString(), t.shininess, t.emissive?.getHexString(),
+          t.emissiveIntensity, t.roughness, t.metalness, t.side, t.flatShading, t.fog, m.castShadow, m.receiveShadow].join('|');
+        if (!looks.has(key)) looks.set(key, []);
+        looks.get(key).push(m);
+      });
+    }
+    for (const meshes of looks.values()) {
+      const use = meshes.filter((m) => m.geometry.attributes.position && m.geometry.attributes.normal);
+      if (use.length < 2) continue;
+      const parts = use.map((m) => {
+        const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+        return g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(toNode, m.matrixWorld));
+      });
+      const merged = new THREE.BufferGeometry();
+      for (const name of ['position', 'normal']) {
+        const out = new Float32Array(parts.reduce((n, g) => n + g.attributes[name].count * 3, 0));
+        let at = 0;
+        for (const g of parts) { out.set(g.attributes[name].array, at); at += g.attributes[name].count * 3; }
+        merged.setAttribute(name, new THREE.BufferAttribute(out, 3));
+      }
+      merged.computeBoundingSphere();
+      const mesh = new THREE.Mesh(merged, use[0].material);
+      mesh.castShadow = use[0].castShadow;
+      mesh.receiveShadow = use[0].receiveShadow;
+      this.batch.add(mesh);
+      for (const m of use) { m.visible = false; this.batchedParts.push(m); }
+      for (const g of parts) g.dispose();
+    }
+    this.node.add(this.batch);
+  }
+
+  // After positions changed (first sync, a drag, a resize): rebuild the batch.
+  syncBatch(moved) {
+    if (!this.merge || !(moved || !this.batch || this.batchDirty)) return;
+    this.batchDirty = false;
+    this._batchStatic();
   }
 
   packState(out = new Float32Array(this.objects.length * 5)) {
@@ -648,6 +765,7 @@ export class World {
   }
 
   resize(bounds) {
+    if (this.merge) { for (const o of this.objects) o.loose = false; this.batchDirty = true; }
     if (this.dressing) {
       this.node.remove(this._ground, this._walls, this._landscape);
       this._buildDressing(bounds);
@@ -686,13 +804,21 @@ export class World {
         o.wanderT = rnd(1.2, 3.2);
         const speed = rnd(14, 34);
         const ang = rnd(0, Math.PI * 2);
-        o.vx = Math.cos(ang) * speed;
-        o.vy = Math.sin(ang) * speed;
+        o.tvx = Math.cos(ang) * speed;
+        o.tvy = Math.sin(ang) * speed;
       }
+      // A flying insect turns and speeds up over a fraction of a second, not
+      // within one step. The instant course change made a firefly's closing
+      // speed, and with it the looming input of sense(), jump from nothing
+      // to full strength in a single 8 ms step: the escapes right after
+      // start at night (VALIDATION.md, 25 September 2026).
+      const steer = 1 - Math.exp(-dt / FIREFLY_TURN_S);
+      o.vx += ((o.tvx ?? o.vx) - o.vx) * steer;
+      o.vy += ((o.tvy ?? o.vy) - o.vy) * steer;
       o.pos.x += o.vx * dt;
       o.pos.y += o.vy * dt;
-      if (o.pos.x < -hw || o.pos.x > hw) { o.vx *= -1; o.pos.x = clampf(o.pos.x, -hw, hw); }
-      if (o.pos.y < -hh || o.pos.y > hh) { o.vy *= -1; o.pos.y = clampf(o.pos.y, -hh, hh); }
+      if (o.pos.x < -hw || o.pos.x > hw) { o.vx *= -1; o.tvx = -(o.tvx ?? 0); o.pos.x = clampf(o.pos.x, -hw, hw); }
+      if (o.pos.y < -hh || o.pos.y > hh) { o.vy *= -1; o.tvy = -(o.tvy ?? 0); o.pos.y = clampf(o.pos.y, -hh, hh); }
       o.mesh.position.x = o.pos.x;
       o.mesh.position.y = o.pos.y;
       o.z = 26 + 5 * Math.sin(this.t * 1.7 + o.pos.x * 0.02);

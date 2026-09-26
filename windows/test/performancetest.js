@@ -1,7 +1,10 @@
 // performancetest.js -- telemetry must measure, never hide a slow frame.
 
-import { AdaptiveRenderQuality, PerformanceMeter } from '../src/performance.js';
+import { AdaptiveRenderQuality, PerformanceMeter, classifyRunTiming } from '../src/performance.js';
+import { buildOutgoingEdgeIndex, sampleVisibleEdges } from '../src/edge-index.js';
 import { SimulationClock } from '../src/sim.js';
+import { ClosedLoop } from '../src/closed-loop.js';
+import { loadBrainData } from '../src/data.js';
 
 let failures = 0;
 const near = (actual, expected, tolerance = 1e-8) => Math.abs(actual - expected) < tolerance;
@@ -55,6 +58,59 @@ check('adaptive render quality protects real-time simulation before lowering dis
   const recovered = stable.observe({ fps: 60, simulationRealtime: 1, droppedSecondsPerSecond: 0 });
   return [low < initial && Math.abs(recovered - 1.25) < 1e-10,
     `${initial.toFixed(2)} -> ${low.toFixed(2)} under load; ${recovered.toFixed(2)} after headroom`];
+});
+
+check('run timing separates pauses, measurement, slow execution and missing simulation time', () => {
+  const perf = (simulationRealtime, totalDroppedSimulationSeconds = 0, windowSeconds = 1) =>
+    ({ simulationRealtime, totalDroppedSimulationSeconds, windowSeconds });
+  const states = [
+    classifyRunTiming({ paused: true, speed: 1, perf: perf(0) }),
+    classifyRunTiming({ speed: 1, perf: perf(0, 0, 0) }),
+    classifyRunTiming({ speed: 2, perf: perf(1.4) }),
+    classifyRunTiming({ speed: 2, perf: perf(2) }),
+    classifyRunTiming({ speed: 2, perf: perf(2, 0.02) }),
+    classifyRunTiming({ speed: 2, perf: { ...perf(2, 0.02), runDroppedSimulationSeconds: 0 } }),
+  ];
+  const expected = ['paused', 'measuring', 'behind', 'on-pace', 'gap', 'on-pace'];
+  return [JSON.stringify(states) === JSON.stringify(expected), states.join(', ')];
+});
+
+check('a new fly starts with a clean run clock while session loss stays auditable', () => {
+  const rig = new ClosedLoop({ data: loadBrainData(), seed: 472, hour: 12, empty: true, spikeBus: false });
+  rig.advance(0.25);
+  const before = rig.runDroppedSimulationSeconds;
+  rig.respawn({ seed: 473 });
+  const event = rig.journal.events.findLast((e) => e.kind === 'respawn');
+  const p = rig.performanceSnapshot();
+  const ok = Math.abs(before - 0.15) < 1e-8
+    && rig.runDroppedSimulationSeconds === 0
+    && Math.abs(rig.totalDroppedSimulationSeconds - before) < 1e-8
+    && Math.abs(event.details.previousRunDroppedSimulationSeconds - before) < 1e-8
+    && p.runDroppedSimulationSeconds === 0
+    && Math.abs(p.totalDroppedSimulationSeconds - before) < 1e-8;
+  return [ok, `prior run ${before.toFixed(3)} s, new run ${p.runDroppedSimulationSeconds.toFixed(3)} s, session ${p.totalDroppedSimulationSeconds.toFixed(3)} s`];
+});
+
+check('compact outgoing index preserves every measured edge and its original order', () => {
+  const from = Int32Array.from([2, 0, 2, 1, 2, 0, 1]);
+  const out = buildOutgoingEdgeIndex(from, 4);
+  const actual = out.map(a => [...a]);
+  const expected = [[1, 5], [3, 6], [0, 2, 4], []];
+  return [JSON.stringify(actual) === JSON.stringify(expected), JSON.stringify(actual)];
+});
+
+check('allocation-bounded ambient selection matches the previous visible stride sample', () => {
+  const from = Int32Array.from([0, 1, 2, 0, 3, 1, 2, 3, 0]);
+  const to = Int32Array.from([1, 2, 3, 2, 0, 3, 0, 1, 3]);
+  const groups = Int32Array.from([0, 1, 1, 2]);
+  const visible = Uint8Array.from([1, 1, 0]);
+  const filtered = from.map((_, k) => k).filter(k => visible[groups[from[k]]] && visible[groups[to[k]]]);
+  const cap = 2, stride = Math.max(1, Math.ceil(filtered.length / cap));
+  const expected = [...filtered.filter((_, i) => i % stride === 0)];
+  const actual = [...sampleVisibleEdges(from, to, groups, visible, cap)];
+  const empty = sampleVisibleEdges(from, to, groups, Uint8Array.from([0, 0, 0]), cap);
+  return [JSON.stringify(actual) === JSON.stringify(expected) && empty.length === 0,
+    `selected ${actual.join(',')} of ${filtered.length} eligible edges`];
 });
 
 console.log(failures === 0 ? 'ALL PERFORMANCE TESTS PASS' : `${failures} PERFORMANCE TESTS FAILED`);

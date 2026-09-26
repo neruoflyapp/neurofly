@@ -53,10 +53,14 @@ export function fisherExact(a, b, c, d) {
 }
 void logFactorial;
 
-// Mann-Whitney U with the normal approximation (tie-corrected), two-sided.
+// Two-sided Mann-Whitney U. For small samples, enumerate the exact
+// conditional permutation distribution of the pooled midranks. This remains
+// valid when readouts are tied (common for spike counts and binary outcomes),
+// whereas a normal approximation can be misleading for 4-8 trials per arm.
+// Larger designs use the tie-corrected normal approximation to bound runtime.
 export function mannWhitney(xs, ys) {
   const n1 = xs.length, n2 = ys.length;
-  if (!n1 || !n2) return { u: NaN, p: NaN };
+  if (!n1 || !n2 || ![...xs, ...ys].every(Number.isFinite)) return { u: NaN, p: NaN, method: 'invalid' };
   const all = [...xs.map((v) => ({ v, g: 0 })), ...ys.map((v) => ({ v, g: 1 }))].sort((a, b) => a.v - b.v);
   const ranks = new Array(all.length);
   let tieTerm = 0;
@@ -74,10 +78,47 @@ export function mannWhitney(xs, ys) {
   const u1 = r1 - n1 * (n1 + 1) / 2;
   const n = n1 + n2;
   const mu = n1 * n2 / 2;
+  // Number of reallocations of group labels, capped before any enumeration.
+  let partitions = 1;
+  const smaller = Math.min(n1, n2);
+  for (let i = 1; i <= smaller && partitions <= 100000; i++) partitions = partitions * (n - smaller + i) / i;
+  if (partitions <= 100000) {
+    // Doubled midranks are integers, so the extremeness comparison is exact
+    // even with tied measurements and cannot depend on floating-point epsilons.
+    const ranks2 = ranks.map((r) => Math.round(r * 2));
+    const centre2 = n1 * (n + 1);
+    const observedDistance = Math.abs(2 * r1 - centre2);
+    let extreme = 0, total = 0;
+    const enumerate = (start, selected, sum2) => {
+      if (selected === n1) {
+        total++;
+        if (Math.abs(sum2 - centre2) >= observedDistance) extreme++;
+        return;
+      }
+      for (let i = start; i <= n - (n1 - selected); i++) enumerate(i + 1, selected + 1, sum2 + ranks2[i]);
+    };
+    enumerate(0, 0, 0);
+    return { u: u1, p: extreme / total, method: 'exact-permutation', permutations: total };
+  }
   const sigma = Math.sqrt(n1 * n2 / 12 * ((n + 1) - tieTerm / (n * (n - 1))));
-  if (!(sigma > 0)) return { u: u1, p: 1 };
+  if (!(sigma > 0)) return { u: u1, p: 1, method: 'normal-approximation' };
   const z = (Math.abs(u1 - mu) - 0.5) / sigma;
-  return { u: u1, p: Math.min(1, 2 * (1 - normalCdf(Math.max(0, z)))) };
+  return { u: u1, p: Math.min(1, 2 * (1 - normalCdf(Math.max(0, z)))), method: 'normal-approximation' };
+}
+
+// Holm step-down family-wise error control. Preserve the caller's order and
+// enforce monotonic adjusted p values in sorted order. Intended for a
+// prespecified family of related tests, not as a substitute for replication.
+export function holmAdjusted(pValues) {
+  if (!pValues.every((p) => Number.isFinite(p) && p >= 0 && p <= 1)) throw new RangeError('Holm adjustment requires finite p values in [0, 1]');
+  const sorted = pValues.map((p, index) => ({ p, index })).sort((a, b) => a.p - b.p || a.index - b.index);
+  const adjusted = new Array(pValues.length);
+  let cumulative = 0;
+  sorted.forEach(({ p, index }, rank) => {
+    cumulative = Math.max(cumulative, Math.min(1, p * (sorted.length - rank)));
+    adjusted[index] = cumulative;
+  });
+  return adjusted;
 }
 
 export function normalCdf(z) {

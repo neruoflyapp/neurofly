@@ -1,4 +1,4 @@
-// sim-worker.js — the live fly, on her own CPU core.
+// sim-worker.js — the live fly, on a separate worker thread.
 //
 // The complete closed loop (brain, nerve cord, body, world, instruments; see
 // src/closed-loop.js) runs here on its fixed 120 Hz clock, decoupled from the
@@ -59,6 +59,10 @@ onmessage = (event) => {
       case 'frame-ack': framePending = false; break;
       case 'init': {
         loop = new ClosedLoop({ data: m.data, bounds: m.bounds, seed: m.seed });
+        // The page can finish constructing both GPU views before neural time
+        // begins. Otherwise startup contention creates an avoidable gap in a
+        // run that has not yet been visible to the observer.
+        loop.paused = !!m.startPaused;
         if (m.ambient) loop.ambient = { ...loop.ambient, ...m.ambient };
         post('ready', { layout: loop.world.layout(), populations: [...loop.populations().values()].map(({ key, label, indices }) => ({ key, label, count: indices.length })),
           seed: loop.neuralSeed, sessionId: loop.sessionId, hasTaste: loop.sim.hasTaste, hasGrooming: loop.sim.hasGroomingPathway });
@@ -89,7 +93,7 @@ onmessage = (event) => {
         switch (m.what) {
           case 'manifest': result = loop.manifest(); break;
           case 'stopRecording': result = loop.stopRecording(a); break;
-          case 'clearRecording': loop.clearRecording(); result = true; break;
+          case 'clearRecording': result = loop.clearRecording(); break;
           case 'learningCSV': result = loop.learningCSV(); break;
           case 'mapCSV': result = loop.spatialMap.totalTime > 0 ? loop.spatialMap.toCSV() : null; break;
           case 'probe': result = loop.probe(a.index); break;

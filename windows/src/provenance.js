@@ -6,7 +6,7 @@
 // recorded trial can identify both the exact input bundle and its neural RNG
 // seed.  It intentionally does not manufacture a "sentience score".
 
-export const MODEL_VERSION = '2.1.0';
+export const MODEL_VERSION = '2.2.0';
 export const BRAIN_DATASET = 'FlyWire FAFB v783';
 export const VNC_DATASET = 'MaleCNS v1.0';
 

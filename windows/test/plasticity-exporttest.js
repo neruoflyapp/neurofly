@@ -1,6 +1,7 @@
 // Isolated export contract tests: no large circuit or neural run is required.
 import assert from 'node:assert/strict';
 import { PLASTICITY_EXPORT_COLUMNS, plasticityChangesCSV } from '../src/plasticity-export.js';
+import { LIFSim } from '../src/sim.js';
 
 // Small independent CSV reader for round trips, including quoted CR and LF.
 function parseCSV(text) {
@@ -88,7 +89,31 @@ assert.equal(legacy.brain_bundle_sha256, '', 'a short fingerprint must not masqu
 assert.equal(legacy.plasticity_tau_ms, '', 'unknown parameters are not invented');
 assert.equal(legacy.pre_neuron_id, '');
 assert.equal(legacy.protocol_history_count, '', 'absent history is not a measured zero');
+assert.equal(legacy.effective_weight, '', 'unknown effective weights are not inferred from intrinsic weights');
+assert.equal(legacy.transmitter_gain, '', 'an absent gain is not assumed to be one');
 console.log('PASS  legacy caller remains supported with explicit unknown metadata');
+
+const sim = new LIFSim({
+  neurons: [
+    { id: 'pre', type: 'LC4', role: 'lc4', side: 'left', pos: [0, 0, 0] },
+    { id: 'post', type: 'DNp01', role: 'gf', side: 'left', pos: [1, 0, 0] },
+  ], edges: [[0, 1, 100, 0]],
+}, null, null, { seed: 1, plasticity: { enabled: true } });
+sim._adjustPlasticWeight(0, 1);
+sim.setTransmitterGain('exc', 0);
+const [blocked] = records(plasticityChangesCSV({ plasticity: sim.plasticitySummary(), changes: sim.plasticityChanges() }));
+assert.equal(blocked.effective_weight, '0');
+assert.equal(blocked.transmitter_gain, '0');
+assert.ok(Number(blocked.current_weight) > Number(blocked.initial_weight));
+assert.ok(Number(blocked.relative_change) > 0);
+assert.match(blocked.weight_semantics, /unmodulated/);
+sim.setTransmitterGain('exc', 1);
+const [restored] = records(plasticityChangesCSV({ plasticity: sim.plasticitySummary(), changes: sim.plasticityChanges() }));
+assert.equal(restored.current_weight, blocked.current_weight);
+assert.equal(restored.relative_change, blocked.relative_change);
+assert.equal(restored.effective_weight, restored.current_weight);
+assert.equal(restored.transmitter_gain, '1');
+console.log('PASS  blocked and restored runs export retained learning separately from effective transmission');
 
 const [invalid] = records(plasticityChangesCSV({
   data: { circuit: { neurons: [{ id: 720575940600000001 }, { id: 12 }] } },

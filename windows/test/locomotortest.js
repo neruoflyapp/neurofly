@@ -36,6 +36,22 @@ check('network silent without descending or sensory input', () => {
   return 'zero spontaneous spikes and motor command';
 });
 
+check('batched ascending feedback is bit-identical to one-millisecond steps', () => {
+  const make = () => new LIFSim(data.circuit, null, data.locomotor, { seed: 47382 });
+  const batched = make(), singles = make();
+  for (const sim of [batched, singles]) {
+    sim.gaitPhase = 0.237;
+    for (const i of sim._ascendVncIdx) sim.locomotor.rates[i] = 40;
+  }
+  batched.step(8);
+  for (let i = 0; i < 8; i++) singles.step(1);
+  assert(batched._ascendWave?.length > 0, 'ascending wave was not exercised');
+  assert.deepEqual(batched.v, singles.v);
+  assert.deepEqual(batched.refr, singles.refr);
+  assert.deepEqual(batched.locomotor.rates, singles.locomotor.rates);
+  return `${batched.ascend.length} ascending cells, same neural and cord state after 8 ms`;
+});
+
 check('descending recruitment requires synapses and motor neurons', () => {
   const active = new LocomotorSim(data.locomotor);
   const cut = new LocomotorSim(data.locomotor);
@@ -441,9 +457,13 @@ function transitionCheck(kind, phases, expected) {
   });
 }
 
-transitionCheck('groom and resume', [[120, 0, 1, false], [240, 1, 0, false]],
+// A moderate walking drive waits for grooming to end; a strong one
+// (WALK_OVERRIDES_GROOMING) interrupts it, as DNp09 activation does.
+transitionCheck('groom and resume', [[120, 0, 1, false], [240, 0.6, 0, false]],
   ['walking', 'grooming', 'idle', 'walking']);
-transitionCheck('idle sleep and wake', [[120, 0, 0, false], [120, 0, 0, true], [240, 1, 0, false]],
+transitionCheck('walking interrupts grooming', [[120, 0, 1, false], [240, 1.2, 1, false]],
+  ['walking', 'grooming', 'walking']);
+transitionCheck('idle sleep and wake', [[120, 0, 0, false], [120, 0, 0, true], [240, 0.6, 0, false]],
   ['walking', 'idle', 'sleeping', 'grooming', 'idle', 'walking']);
 transitionCheck('flight and landing', [[480, 0, 0, false], [180, 1, 0, false]],
   ['walking', 'flying', 'idle', 'walking']);

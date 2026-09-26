@@ -59,6 +59,65 @@ check('saturated Float32 synapses report only actual weight changes', () => {
   return [results.every(Boolean), 'positive and negative saturation: no phantom updates or reversed LTP/LTD counts'];
 });
 
+check('reversible transmitter blockade preserves learned efficacy and finite exports', () => {
+  const sim = isolatedPair({ enabled: true, learningRate: 0.02 });
+  sim._adjustPlasticWeight(0, 1);
+  const before = sim.plasticityChanges()[0], updates = sim.plasticitySummary().updates;
+  sim.setTransmitterGain('exc', 0);
+  const blocked = sim.plasticityChanges()[0];
+  sim._adjustPlasticWeight(0, 1);
+  const blockedUpdates = sim.plasticitySummary().updates;
+  sim.setTransmitterGain('exc', 1);
+  const restored = sim.plasticityChanges()[0];
+  const ok = Number.isFinite(blocked.relativeChange) && blocked.effectiveWeight === 0
+    && blocked.transmitterGain === 0 && blocked.currentWeight === before.currentWeight
+    && blocked.initialWeight === before.initialWeight && blocked.relativeChange === before.relativeChange
+    && blockedUpdates === updates && restored.currentWeight === before.currentWeight
+    && restored.effectiveWeight === before.currentWeight && restored.relativeChange === before.relativeChange;
+  return [ok, `learned delta=${before.relativeChange.toPrecision(5)}; blocked=${blocked.relativeChange.toPrecision(5)}; restored=${restored.relativeChange.toPrecision(5)}`];
+});
+
+check('dose changes retain learning acquired after an earlier dose and washout', () => {
+  const sim = isolatedPair({ enabled: true, learningRate: 0.02 });
+  const base = sim.plasticBaseW[0];
+  sim.setTransmitterGain('exc', 0.5);
+  sim._adjustPlasticWeight(0, 1);
+  const first = sim.plasticityChanges()[0];
+  sim.setTransmitterGain('exc', 0);
+  sim.setTransmitterGain('exc', 2);
+  sim._adjustPlasticWeight(0, 1);
+  const second = sim.plasticityChanges()[0];
+  const updates = sim.plasticitySummary().updates;
+  for (const gain of [0, 0.3, 1.7, 0, 1]) sim.setTransmitterGain('exc', gain);
+  const final = sim.plasticityChanges()[0];
+  const ok = first.effectiveWeight === Math.fround(first.currentWeight * 0.5)
+    && second.effectiveWeight === Math.fround(second.currentWeight * 2)
+    && second.currentWeight > first.currentWeight && second.relativeChange > first.relativeChange
+    && final.currentWeight === second.currentWeight && final.initialWeight === base
+    && final.effectiveWeight === final.currentWeight && final.relativeChange === second.relativeChange
+    && sim.plasticitySummary().updates === updates && updates === 2;
+  return [ok, `two learned changes survive five dose transitions; delta=${final.relativeChange.toPrecision(5)}`];
+});
+
+check('pharmacological gain alone is not reported as synaptic learning', () => {
+  const sim = isolatedPair({ enabled: true });
+  const base = sim.plasticBaseW[0];
+  for (const gain of [0.2, 0, 3, 0, 1]) sim.setTransmitterGain('exc', gain);
+  return [sim.w[0] === base && sim.plasticBaseW[0] === base
+    && sim.plasticityChanges().length === 0 && sim.plasticitySummary().updates === 0,
+  'dose-only run retains the baseline, no changed-contact rows and zero learning updates'];
+});
+
+check('fixed runs restore exact baseline and reject invalid transmitter classes', () => {
+  const sim = isolatedPair();
+  const before = sim.w[0];
+  for (const gain of [0.3, 0, 0.7, 4, 0, 1]) sim.setTransmitterGain('exc', gain);
+  const gainsBefore = JSON.stringify(sim.transmitterGain);
+  const rejected = [NaN, Infinity, 0.5, -1, 5, 'unknown'].every((cls) => sim.setTransmitterGain(cls, 0) === false);
+  return [sim.w[0] === before && rejected && JSON.stringify(sim.transmitterGain) === gainsBefore,
+  'washout restores exact baseline; NaN/fractional/out-of-range classes leave state unchanged'];
+});
+
 check('one-ms immediate and zero-delay pulses each deliver one neural step', () => {
   const outcomes = [];
   for (const delay of [null, 0, 1]) {
@@ -134,7 +193,7 @@ check('the opt-in learning experiment restricts plasticity to a named anatomical
   });
   const p = sim.plasticitySummary();
   return [p.enabled && p.eligibleEdges > 0 && p.eligibleEdges < data.circuit.edges.length,
-    `${p.eligibleEdges} of ${data.circuit.edges.length} contacts are eligible; rule=${p.mechanism}`];
+    `${p.eligibleEdges} of ${data.circuit.edges.length} directed connections are eligible; rule=${p.mechanism}`];
 });
 
 check('pre-before-post timing potentiates an eligible synapse and records the update', () => {
@@ -235,7 +294,7 @@ check('the reverse scheduled protocol provides a depression control', () => {
   return [ok, `reverse scheduled weight ${before.toPrecision(5)} -> ${sim.w[edge.slot].toPrecision(5)}`];
 });
 
-check('changed contacts export with trial provenance instead of a nameless weight list', () => {
+check('changed connections export with trial provenance instead of a nameless weight list', () => {
   const sim = new LIFSim(data.circuit, null, null, {
     seed: 37,
     plasticity: { enabled: true, learningRate: 0.02 },
@@ -256,7 +315,7 @@ check('changed contacts export with trial provenance instead of a nameless weigh
   const ok = header.includes('initial_weight') && header.includes('update_count') && header.includes('protocol_pair_order')
     && row.includes('1.2.0') && row.includes('feedface') && row.includes('bounded-pair-stdp')
     && row.includes('visual-to-flight-alarm') && row.includes('pre-before-post');
-  return [ok, `${sim.plasticityChanges().length} changed contact(s) exported with model and seed`];
+  return [ok, `${sim.plasticityChanges().length} changed connection(s) exported with model and seed`];
 });
 
 console.log(failures === 0 ? 'ALL PLASTICITY TESTS PASS' : `${failures} PLASTICITY TESTS FAILED`);

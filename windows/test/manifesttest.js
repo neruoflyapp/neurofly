@@ -24,15 +24,21 @@ check('manifest preserves provenance, model choices and bounded learning statist
       },
     },
     plasticity: { enabled: true, mechanism: 'bounded-pair-stdp', tauMs: 20, learningRate: 0.02, maxRelativeChange: 0.15,
-      eligibleEdges: 2, updates: 5, potentiations: 3, depressions: 2, meanAbsRelativeChange: 0.04 },
+      eligibleEdges: 2, updates: 5, potentiations: 3, depressions: 2, meanAbsRelativeChange: 0.04,
+      weightBasis: 'unmodulated synaptic efficacy', blockedClassLearning: 'paused at zero transmitter gain (model assumption)' },
     protocol: { name: 'visual-to-flight-alarm', pairOrder: 'pre-before-post', trials: 16, delayMs: 8, intervalMs: 140 },
-    performance: { windowSeconds: 0.5, fps: 60, simulationRealtime: 1, coreRealtime: 4, droppedSecondsPerSecond: 0 },
+    performance: { windowSeconds: 0.5, fps: 60, simulationRealtime: 1, coreRealtime: 4, droppedSecondsPerSecond: 0,
+      totalDroppedSimulationSeconds: 0.4, runDroppedSimulationSeconds: 0.1 },
   });
   const ok = manifest.schema === MANIFEST_SCHEMA && manifest.model.neuralSeed === 1234
     && manifest.data.structuralAuditValid && manifest.data.brainEdges === 7
     && manifest.plasticity.updates === 5 && manifest.protocol?.pairOrder === 'pre-before-post'
     && manifest.plasticity.tauMs === 20 && manifest.plasticity.learningRate === 0.02
-    && manifest.plasticity.maxRelativeChange === 0.15;
+    && manifest.plasticity.maxRelativeChange === 0.15
+    && manifest.plasticity.weightBasis === 'unmodulated synaptic efficacy'
+    && manifest.plasticity.blockedClassLearning === 'paused at zero transmitter gain (model assumption)'
+    && manifest.performance.totalDroppedSimulationSeconds === 0.4
+    && manifest.performance.runDroppedSimulationSeconds === 0.1;
   return [ok, `seed=${manifest.model.neuralSeed}, edges=${manifest.data.brainEdges}, updates=${manifest.plasticity.updates}`];
 });
 
@@ -78,6 +84,7 @@ check('unknown telemetry stays unknown while measured zero is preserved', () => 
   });
   const ok = Object.values(unknown.performance).every((value) => value === null)
     && unknown.plasticity.enabled === null && unknown.plasticity.updates === null
+    && unknown.plasticity.weightBasis === null && unknown.plasticity.blockedClassLearning === null
     && unknown.data.structuralAuditValid === null && unknown.data.runningBrainNeurons === null
     && measured.performance.fps === 0 && measured.performance.droppedSecondsPerSecond === 0
     && measured.plasticity.enabled === false && measured.plasticity.updates === 0;

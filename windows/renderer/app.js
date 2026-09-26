@@ -7,7 +7,7 @@
 import { SimClient } from './sim-client.js';
 import { TerrariumView } from './view/terrarium.js';
 import { BrainView } from './view/brain.js';
-import { t, getLanguage, setLanguage } from './i18n.js';
+import { t, getLanguage, setLanguage, untranslated } from './i18n.js';
 import { h, icon } from './ui/dom.js';
 import { buildShell } from './ui/shell.js';
 import { buildDock } from './ui/dock.js';
@@ -66,7 +66,7 @@ const ctx = {
 };
 
 // With NEUROFLY_DEBUG=1 the context is reachable from the dev tools.
-if (new URLSearchParams(location.search).get('debug') === '1') window.__nf = ctx;
+if (new URLSearchParams(location.search).get('debug') === '1') window.__nf = Object.assign(ctx, { untranslated });
 
 const panels = [livePanel, stimulatePanel, circuitPanel, experimentsPanel, sentiencePanel, dataPanel, modelPanel, specimensPanel];
 
@@ -85,7 +85,7 @@ const panels = [livePanel, stimulatePanel, circuitPanel, experimentsPanel, senti
   const bounds = { width: Math.max(300, terrariumEl.clientWidth), height: Math.max(200, terrariumEl.clientHeight) };
   let info;
   try {
-    info = await client.init(data, bounds, undefined, undefined);
+    info = await client.init(data, bounds, undefined, undefined, { startPaused: true });
   } catch (error) {
     boot(`${t('The simulation could not start:')} ${error.message}`, 1);
     return;
@@ -155,6 +155,7 @@ const panels = [livePanel, stimulatePanel, circuitPanel, experimentsPanel, senti
       const perf = ctx.snap?.perf;
       const next = quality.observe({ fps, simulationRealtime: perf && !ctx.snap.paused ? Math.min(perf.simulationRealtime / Math.max(0.1, ctx.snap.speed), 1) : 1, droppedSecondsPerSecond: ctx.snap?.paused ? 0 : (perf?.droppedSecondsPerSecond ?? 0) });
       ctx.views.terrarium.setPixelRatio(next);
+      ctx.views.brain.setPixelRatio(next);
       ctx.pixelRatio = next;
     }
     ctx.views.terrarium.frame(dt, now);
@@ -175,6 +176,10 @@ const panels = [livePanel, stimulatePanel, circuitPanel, experimentsPanel, senti
 
   inspector.ready();
   boot('Ready.', 1);
+  // All views and frame listeners are mounted before the first neural tick.
+  // The worker discards paused wall time instead of counting boot work as
+  // missing biology; resuming here preserves the normal closed-loop clock.
+  client.command('pause', { paused: false });
   setTimeout(() => document.getElementById('boot').classList.add('done'), 250);
   setTimeout(() => document.getElementById('boot').remove(), 900);
   console.info(`NeuroFly: ${data.circuit.neurons.length} brain neurons, ${data.locomotor?.neurons?.length ?? 0} nerve-cord neurons; simulation in a worker at 120 Hz`);

@@ -82,6 +82,10 @@ async function run(win) {
   }
   report(neural > 0.4 * wall, 'neural time advances in real time',
     `${Math.round(neural)} ms of neural time in ${(wall / 1000).toFixed(1)} s wall time (window ${windows})`);
+  const renderQuality = await js(win, `return { brain: __nf.views.brain.pixelRatio, shared: __nf.pixelRatio };`);
+  report(Number.isFinite(renderQuality.brain) && Math.abs(renderQuality.brain - renderQuality.shared) < 0.001,
+    'both 3D views follow the same adaptive display resolution',
+    `${renderQuality.brain?.toFixed(2)}× brain, ${renderQuality.shared?.toFixed(2)}× shared`);
 
   await js(win, `document.getElementById('focusMode').click(); return true;`);
   const focused = await js(win, `return document.body.classList.contains('focus-mode') && document.getElementById('focusMode').getAttribute('aria-pressed') === 'true' && getComputedStyle(document.getElementById('panel')).display === 'none';`);
@@ -105,6 +109,13 @@ async function run(win) {
     await sleep(400);
     await shot(win, `workspace-${i + 1}`);
     report(!!text && specimens && pageErrors.length === errorsBefore, `workspace ${i + 1} mounts`, text ? `"${text}…"` : 'empty panel');
+    if (i === 6) {
+      const timing = await js(win, `const s = document.querySelector('#panel .timing-status'); return { state: s?.dataset.state, rows: document.querySelectorAll('#panel .timing-status + .kv dd').length, message: s?.textContent };`);
+      report(['paused', 'gap', 'measuring', 'behind', 'on-pace'].includes(timing.state)
+        && timing.rows === 10 && !!timing.message,
+      'the Model workspace exposes numerical run quality and lost simulation time',
+      `${timing.state || 'missing'}; ${timing.rows} metric values`);
+    }
   }
 
   // Pause freezes neural time; resume continues it.
@@ -123,16 +134,35 @@ async function run(win) {
   const after = await waitFor(win, `const r = document.querySelector('#rail').innerText; return r !== ${JSON.stringify(before.rail)} ? { lang: document.documentElement.lang, rail: r, ms: __nf.snap.neuralMs } : null;`, 5000);
   report(!!after && after.lang !== before.lang && after.ms >= before.ms, 'the language toggle relabels the interface and keeps the run',
     after ? `${before.lang} -> ${after.lang}, neural time kept (${Math.round(before.ms)} -> ${Math.round(after.ms)} ms)` : 'labels unchanged');
-  if (after) await js(win, `[...document.querySelectorAll('.topbar button, header button')].find((b) => /^(DE|EN)$/.test(b.textContent.trim()))?.click(); return true;`);
+  // In German, every workspace finds a translation for every text it shows
+  // (the static check in tools/check-i18n.mjs cannot see texts that reach
+  // t() through variables).
+  if (after) {
+    const toggle = `[...document.querySelectorAll('.topbar button, header button')].find((b) => /^(DE|EN)$/.test(b.textContent.trim()))?.click(); return true;`;
+    if (after.lang !== 'de') await js(win, toggle);
+    await js(win, `__nf.untranslated.clear(); return true;`);
+    for (let i = 0; i < count; i++) {
+      await js(win, `document.querySelectorAll('#rail button')[${i}].click(); return true;`);
+      await waitFor(win, `return (document.querySelector('#panel')?.innerText ?? '').length > 80;`, 20000);
+      await sleep(600);
+    }
+    // symbols and numbers ("♀ / ♂") need no translation
+    const missing = await js(win, `return document.documentElement.lang === 'de' ? [...__nf.untranslated].filter((s) => /[A-Za-z]/.test(s)) : null;`);
+    report(Array.isArray(missing) && missing.length === 0, 'every workspace is fully translated into German',
+      missing === null ? 'German not active' : missing.length ? missing.slice(0, 8).map((s) => JSON.stringify(s.slice(0, 70))).join(' | ') : 'no untranslated text');
+    await js(win, `document.querySelectorAll('#rail button')[0].click(); return true;`);
+    if (before.lang !== 'de') await js(win, toggle);
+  }
 
   // A loom makes her take off, and the event arrives with its causal chain.
   // The live fly is not seeded for this test and may already be airborne, so
   // wait until she is on the ground, and allow up to three attempts.
   let takeoff = null;
-  for (let attempt = 0; attempt < 3 && !takeoff; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     await waitFor(win, `return __nf.snap.fly.state !== 'flying';`, 15000);
     await js(win, `__nf.state.lastEvents.length = 0; __nf.command('stim.loom', { strength: 1 }); return true;`);
     takeoff = await waitFor(win, `return __nf.state.lastEvents.find((e) => e.kind === 'takeoff') ?? null;`, 4000);
+    if (takeoff && ['stim', 'loomL', 'loomR'].includes(takeoff.trigger?.channel) && takeoff.command?.group === 'gf') break;
   }
   report(!!takeoff && ['stim', 'loomL', 'loomR'].includes(takeoff.trigger?.channel) && takeoff.command?.group === 'gf',
     'a loom triggers a takeoff with a traced causal chain',

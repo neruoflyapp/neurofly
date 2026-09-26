@@ -1,6 +1,6 @@
 # NeuroFly for Windows
 
-Release 2.1.0. A 3D fruit fly in her own terrarium, driven by a 1 kHz
+Release 2.2.0. A 3D fruit fly in her own terrarium, driven by a 1 kHz
 leaky-integrate-and-fire **model** over measured FlyWire FAFB v783 wiring —
 7,270 brain neurons and 784,219 signed synapse-count connections: the
 6,338-neuron escape/steering subgraph (338 command/sensory neurons plus their
@@ -38,9 +38,10 @@ seeded generators, so the same seed and the same inputs reproduce a run
 exactly; recordings and run manifests carry the model version, both seeds'
 source, the data fingerprints, every intervention with its time, and any
 simulation time lost to overload. The optional learning kernel applies a
-bounded pair-timing rule to 1,627 anatomically present excitatory
-sensory-to-command contacts and logs every change; it is an experiment, not a
-claim that those contacts have a measured STDP rule. The default model keeps
+bounded pair-timing rule to 1,627 selected excitatory sensory-to-command
+directed connections (with contact-derived weights) and logs every change;
+it is an experiment, not a claim that those connections have a measured STDP
+rule. The default model keeps
 all extracted synapse weights fixed.
 
 `npm run sciencetest` checks those claims: circuit structure, source
@@ -260,11 +261,11 @@ profiled performance breakdown. Summary:
 - A lost WebGL context (GPU driver crash, laptop GPU switching, sleep/resume)
   is caught and a recovery attempt is made automatically, with an on-screen
   notice either way — it no longer just silently goes black.
-- The resting synapse web is a deterministic, capped sample (still tens of
-  thousands of real synapses) for GPU performance at 784k edges — any real
-  edge, sampled or not, still lights up in full the instant it actually
-  fires. The Groups legend filters this sample by real
-  endpoint classification, not by a separate "importance" heuristic.
+- The resting synapse web is a deterministic, capped sample of the measured
+  edges for GPU performance. Spike flashes also show a bounded, evenly spaced
+  selection of each firing neuron's outgoing edges. This visual sampling does
+  not remove any edges from the numerical simulation. The Groups legend filters
+  the visible sample by endpoint classification, not by an "importance" score.
 - There is no antennal-lobe/odorant-receptor data in the extracted circuit,
   so distinct smells aren't distinguished — only concentration is real.
 - Dopamine/serotonin/octopamine readouts are real per-synapse signaling

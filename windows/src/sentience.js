@@ -173,14 +173,22 @@ export function assessSentience({ circuit = null, provenance = null, pathways = 
   ];
   for (const c of criteria) c.animal = ANIMAL_RATINGS[c.id];
   const subjective = { id: 'subjective-experience', name: 'Subjective experience', status: STATUS.notMeasurable };
-  const modelled = criteria.filter((c) => c.status !== STATUS.absent).length;
+  // Kept apart on purpose: a mechanism partly present in the circuit, a
+  // tentative mechanism that is not the fly's own ("experimental"), and none.
+  // They are never added up into one number, and never set against the
+  // animal ratings, which grade evidence about real flies.
+  const counts = {
+    partial: criteria.filter((c) => c.status === STATUS.partial).length,
+    experimental: criteria.filter((c) => c.status === STATUS.experimental).length,
+    absent: criteria.filter((c) => c.status === STATUS.absent).length,
+  };
   const animalStrong = criteria.filter((c) => c.animal === 'VH' || c.animal === 'H').length;
   return Object.freeze({
     framework: 'Birch et al. (2021), 8 criteria; animal ratings: Gibbons et al. (2022), Table 11, adult Diptera',
     criteriaCount: criteria.length,
     criteria,
     items: [...criteria, subjective],
-    modelled,
+    counts,
     animalStrong,
     conclusion: 'Evidence map against the Birch et al. (2021) criteria — not a sentience score and not a proof of feeling.',
     provenanceStatus: { thermo: provenance?.thermoExtensionStatus ?? 'absent', sensory: provenance?.sensoryExtensionStatus ?? 'absent' },

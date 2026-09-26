@@ -105,7 +105,7 @@ export class TerrariumView {
 
     this._buildLights();
     this._buildRenderer();
-    this.world = new World(this.bounds, { layout });
+    this.world = new World(this.bounds, { layout, merge: true });
     this.scene.add(this.world.node);
     this._buildWeather();
     this._buildMapOverlay();
@@ -465,6 +465,11 @@ export class TerrariumView {
   _renderEye() {
     const f = this.snap?.fly;
     if (!f) return;
+    // The current read owns the previous frame's PBO. Rendering another eye
+    // frame while it is pending cannot produce a sensory sample: the read
+    // below would be skipped. Avoid that unused GPU pass, but leave the
+    // 20 Hz sampling check in frame() and every accepted read unchanged.
+    if (this.visionReadPending) return;
     const headZ = f.z + 8;
     this.visionCamera.position.set(f.x, f.y, headZ);
     this.visionCamera.lookAt(f.x + Math.cos(f.heading) * 40, f.y + Math.sin(f.heading) * 40, headZ);
@@ -474,7 +479,6 @@ export class TerrariumView {
     r.render(this.scene, this.visionCamera);
     r.setRenderTarget(null);
     r.toneMappingExposure = this.displayExposure;
-    if (this.visionReadPending) return;
     this.visionReadPending = true;
     r.readRenderTargetPixelsAsync(this.visionTarget, 0, 0, VISION_W, VISION_H, this.visionPixels)
       .then(() => { this.visionReadPending = false; this._processEye(); })
@@ -635,7 +639,12 @@ export class TerrariumView {
     return true;
   }
 
-  setPixelRatio(r) { this.renderer.setPixelRatio(r); }
+  // three.js re-sizes the canvas on every call, which reallocates its drawing
+  // buffer: only when the ratio actually changes (it is re-evaluated each second).
+  setPixelRatio(r) {
+    if (Math.abs(r - this.renderer.getPixelRatio()) < 0.001) return;
+    this.renderer.setPixelRatio(r);
+  }
 
   // head position of the brain-carrying fly on screen, for anchoring labels
   flyScreenPosition() {

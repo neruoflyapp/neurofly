@@ -57,7 +57,7 @@ const VERDICTS = {
   necessary: { cls: 'consistent', title: 'Directed self-care, through the real pathway', text: 'Dust makes her groom her head, and silencing the JO-F neurons abolishes it: the behaviour needs exactly the sensory cells the literature identifies.' },
   groomsNotNecessary: { cls: 'differs', title: 'Grooming without JO-F', text: 'She groomed, but silencing JO-F did not abolish it significantly.' },
   noGrooming: { cls: 'differs', title: 'No grooming response', text: 'Dust did not reliably trigger head grooming in this run.' },
-  screen: { cls: 'consistent', title: '{matches} of {total} cell types behave as published', text: 'Each cell type was switched on alone; the table shows which behaviour it added over the control. Mismatches are reported as they are — they show where the extracted circuit or the body model falls short.' },
+  screen: { cls: 'consistent', title: '{matches} of {total} expected effects (raw p)', text: 'Each cell type was activated alone and compared with its control. ✓ marks an exploratory raw p < 0.05 in the expected direction; the Holm-adjusted tally is shown separately. Hover a row for measured values. Mismatches remain visible.' },
   bothMatter: { cls: 'consistent', title: 'Both looming pathways feed the escape', text: 'Silencing LPLC2 or LC4 each reduces the giant fiber\'s response significantly, and silencing both abolishes it.' },
   redundant: { cls: 'differs', title: 'Redundant pathways', text: 'Only silencing both pathways had a significant effect.' },
   noEffect: { cls: 'differs', title: 'No significant effect', text: 'Silencing did not change the response significantly.' },
@@ -69,7 +69,7 @@ const VERDICTS = {
   learns: { cls: 'consistent', title: 'Pairing changed the response', text: 'After paired training the weak loom drove the giant fiber harder than after reversed-order training.' },
   noLearning: { cls: 'differs', title: 'No associative learning', text: 'Paired and reversed training changed the response equally. Real flies learn in the mushroom body with dopamine — a circuit this model does not contain; its generic timing rule does not reproduce it.' },
   prefers: { cls: 'consistent', title: 'She finds the comfortable zone', text: 'In the gradient she spent more time near 25 °C than in the flat control.' },
-  noPreference: { cls: 'differs', title: 'No thermal preference', text: 'She did not spend more time near 25 °C in the gradient than in the flat control. Real flies do — using internal warmth sensors (AC neurons) that are not in this circuit.' },
+  noPreference: { cls: 'differs', title: 'No thermal preference', text: 'She did not spend more time near 25 °C in the gradient than in the flat control. Real flies do. Her antennal hot and cold cells respond, but in the extracted circuit their signal does not measurably reach the neurons that steer or start walking, and the brain\'s internal warmth sensors (AC neurons) are missing.' },
 };
 
 const STAT_LABELS = {
@@ -77,13 +77,19 @@ const STAT_LABELS = {
   takeoffSound: 'Takeoffs to sound', takeoffWind: 'Takeoffs to wind', fisherP: 'p (Fisher exact)', mannWhitneyP: 'p (Mann-Whitney U)',
   sugarThreshold: 'Sugar at 50% extension', perSugarOnly: 'Extension, sugar alone', perWithBitter: 'Extension, sugar + max bitter',
   groomFullDust: 'Head grooming, full dust', groomJoFSilenced: 'Head grooming, JO-F silenced', groomDng12Silenced: 'Head grooming, DNg12 silenced',
-  matches: 'Cell types as published', gfSpikesFor: 'GF spikes: {condition}', pVsControlFor: 'p vs intact: {condition}',
+  matches: 'Cell types as published (raw p)', matchesAdjusted: 'Cell types after Holm correction', gfSpikesFor: 'GF spikes: {condition}', pVsControlFor: 'p vs intact: {condition}',
   gfSpikesLowInhibition: 'GF spikes at 0.25× inhibition', gfSpikesHighInhibition: 'GF spikes at 4× inhibition', ic50Gain: 'Half-maximal inhibitory gain', slope: 'Slope', trendP: 'p (trend)',
   slopeFixed: 'Trend, fixed wiring', slopeLearning: 'Trend, learning rule', indexPaired: 'Learning index, paired', indexReversed: 'Learning index, reversed',
   comfortGradient: 'Near 25 °C, gradient', comfortFlat: 'Near 25 °C, flat control',
 };
 const BEHAVIOUR_LABEL = { takeoff: 'takeoff', backward: 'walking backward', headGroom: 'head grooming', legGroom: 'leg rubbing', per: 'proboscis extension',
   walk: 'walking', turnLeft: 'left turn', turnRight: 'right turn', none: 'no change', baseline: '—' };
+const TEST_METHOD_LABEL = {
+  'exact-permutation': 'Mann-Whitney U: exact label permutations (two-sided)',
+  'normal-approximation': 'Mann-Whitney U: tie-corrected normal approximation (two-sided)',
+  'fisher-exact': 'Fisher exact test (two-sided)',
+};
+const methodLabel = (method) => method ? t(TEST_METHOD_LABEL[method] ?? method) : '';
 
 function fmtStat(s) {
   const v = s.value;
@@ -102,14 +108,22 @@ export function renderResult(result, protocol) {
   const canvas = h('canvas');
   const v = VERDICTS[result.verdict?.code] ?? { cls: '', title: result.verdict?.code ?? '', text: '' };
   const params = result.verdict?.params ?? {};
-  const statsEl = h('dl', { class: 'stats' }, ...result.stats.flatMap((s) => [h('dt', {}, t(STAT_LABELS[s.key] ?? s.key, s.params)), h('dd', {}, fmtStat(s))]));
+  const methods = [...new Set([...result.stats.map((s) => s.method), ...(result.table ?? []).map((r) => r.testMethod)].filter(Boolean))];
+  const statsEl = h('dl', { class: 'stats' }, ...result.stats.flatMap((s) => [h('dt', { title: methodLabel(s.method) || null }, t(STAT_LABELS[s.key] ?? s.key, s.params)), h('dd', { title: methodLabel(s.method) || null }, fmtStat(s))]));
+  const measured = (r) => (r.metric === 'proportion'
+    ? t('{a} of trials vs {b} in the control', { a: `${Math.round(r.treated * 100)}%`, b: `${Math.round(r.control * 100)}%` })
+    : t('{a} vs {b} in the control ({unit}, mean per trial)', { a: num(r.treated, 2), b: num(r.control, 2), unit: t(r.metric) }));
   const table = result.table ? h('table', { class: 'table' },
-    h('tr', {}, h('th', {}, t('Cell type')), h('th', {}, t('Published')), h('th', {}, t('Model')), h('th', {}, '')),
-    ...result.table.map((r) => h('tr', {}, h('td', {}, r.target), h('td', {}, t(BEHAVIOUR_LABEL[r.expect] ?? r.expect)),
-      h('td', {}, t(BEHAVIOUR_LABEL[r.observed] ?? r.observed)), h('td', { class: r.match ? 'ok' : 'miss' }, r.match ? '✓' : '✗')))) : null;
+    h('tr', {}, h('th', {}, t('Cell type')), h('th', {}, t('Published')), h('th', {}, t('Effect')), h('th', {}, 'p'), h('th', {}, t('p (Holm)')), h('th', {}, t('Raw match'))),
+    ...result.table.map((r) => h('tr', { title: Number.isFinite(r.effect) ? measured(r) : '' }, h('td', {}, r.target), h('td', {}, t(BEHAVIOUR_LABEL[r.expect] ?? r.expect)),
+      h('td', {}, Number.isFinite(r.effect) ? `${r.effect > 0 ? '+' : ''}${num(r.effect, 2)}` : t(BEHAVIOUR_LABEL[r.observed] ?? r.observed)),
+      h('td', { title: methodLabel(r.testMethod) || null }, Number.isFinite(r.p) ? fmtStat({ value: r.p, format: 'p' }) : ''),
+      h('td', {}, Number.isFinite(r.pAdjusted) ? fmtStat({ value: r.pAdjusted, format: 'p' }) : ''),
+      h('td', { class: r.match ? 'ok' : 'miss' }, r.match ? '✓' : '✗')))) : null;
   const el = h('div', { class: 'result' }, canvas,
     h('div', { class: `verdict ${v.cls}` }, h('b', {}, t(v.title, params)), t(v.text, params)),
     statsEl, table,
+    methods.length ? h('p', { class: 'note' }, t('Statistical methods: {methods}. Raw p values are exploratory; Holm-adjusted values, where shown, control this screen’s family-wise error rate.', { methods: methods.map(methodLabel).join('; ') })) : null,
     h('p', { class: 'note' }, t('Seed {seed} · {sim} s simulated in {wall} s · {trials} trials per condition · model {v}', {
       seed: result.meta.seed, sim: num(result.meta.simulatedSeconds, 0), wall: num(result.meta.wallSeconds, 0),
       trials: result.meta.params.trials, v: result.meta.modelVersion })));

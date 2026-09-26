@@ -65,6 +65,21 @@ export class PerformanceMeter {
   }
 }
 
+// A slow or interrupted run must not be mistaken for a quiet biological state.
+// These are observations about the numerical clock, not claims about the fly.
+export function classifyRunTiming({ paused = false, speed = 1, perf = null } = {}) {
+  const requested = Number.isFinite(speed) && speed > 0 ? speed : 1;
+  const measured = Number.isFinite(perf?.simulationRealtime) ? Math.max(0, perf.simulationRealtime) : null;
+  const runMissing = Number.isFinite(perf?.runDroppedSimulationSeconds)
+    ? perf.runDroppedSimulationSeconds : perf?.totalDroppedSimulationSeconds;
+  const missing = Number.isFinite(runMissing) ? Math.max(0, runMissing) : 0;
+  if (paused) return 'paused';
+  if (missing > 0.000001) return 'gap';
+  if (!Number.isFinite(perf?.windowSeconds) || perf.windowSeconds <= 0 || measured === null) return 'measuring';
+  if (measured < requested * 0.9) return 'behind';
+  return 'on-pace';
+}
+
 // GPU work is observer-side only. This controller can lower the number of
 // shaded pixels when the measured simulation is falling behind, then restore
 // them after sustained headroom. It never changes a neural timestep, input,

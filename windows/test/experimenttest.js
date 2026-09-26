@@ -12,7 +12,7 @@ import './random.js';
 import { loadBrainData } from '../src/data.js';
 import { ClosedLoop } from '../src/closed-loop.js';
 import { PROTOCOLS, seedStream, resultCSV } from '../src/experiments.js';
-import { wilson, fisherExact, mannWhitney, fitLogistic, bootstrapCI, linearFit, median } from '../src/stats.js';
+import { wilson, fisherExact, mannWhitney, holmAdjusted, fitLogistic, bootstrapCI, linearFit, median } from '../src/stats.js';
 
 let failures = 0;
 function check(name, fn) {
@@ -37,7 +37,25 @@ check('Fisher exact test reproduces the tea-tasting table and extreme tables', (
 
 check('Mann-Whitney U: complete separation is significant, identical samples are not', () => {
   const sep = mannWhitney([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12]), same = mannWhitney([1, 2, 3], [1, 2, 3]);
-  return [sep.u === 0 && sep.p < 0.01 && same.p > 0.999, `separated U=${sep.u} p=${sep.p.toFixed(4)}, identical p=${same.p.toFixed(4)}`];
+  return [sep.u === 0 && near(sep.p, 2 / 924, 1e-12) && sep.method === 'exact-permutation' && same.p === 1,
+    `separated U=${sep.u} exact p=${sep.p.toFixed(6)}, identical p=${same.p.toFixed(4)}`];
+});
+check('Mann-Whitney exact permutation handles ties and falls back for large samples', () => {
+  const tied = mannWhitney([1, 1, 2, 2], [3, 3, 4, 4]);
+  const large = mannWhitney(Array.from({ length: 15 }, (_, i) => i), Array.from({ length: 15 }, (_, i) => i + 10));
+  const invalid = mannWhitney([1, NaN], [2, 3]);
+  return [tied.method === 'exact-permutation' && tied.permutations === 70 && near(tied.p, 2 / 70, 1e-12)
+    && large.method === 'normal-approximation' && Number.isFinite(large.p)
+    && invalid.method === 'invalid' && Number.isNaN(invalid.p),
+  `tied p=${tied.p.toFixed(6)} (${tied.permutations} assignments), large=${large.method}`];
+});
+check('Holm correction preserves order and never decreases a raw p value', () => {
+  const raw = [0.04, 0.01, 0.03, 0.9];
+  const adjusted = holmAdjusted(raw);
+  const expected = [0.09, 0.04, 0.09, 0.9];
+  return [adjusted.every((p, i) => near(p, expected[i], 1e-12) && p >= raw[i])
+    && holmAdjusted([]).length === 0,
+  `raw=${raw.join(',')} adjusted=${adjusted.map((p) => p.toFixed(2)).join(',')}`];
 });
 
 check('logistic fit recovers a known 50% point and detects bracketing', () => {

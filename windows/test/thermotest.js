@@ -163,7 +163,7 @@ check('the opt-in plasticity experiment keeps its scope when the extension is lo
   const withExt = new LIFSim(data.circuit, null, null, { seed: 11, plasticity: { enabled: true } });
   const without = new LIFSim(base, null, null, { seed: 11, plasticity: { enabled: true } });
   const a = withExt.plasticitySummary().eligibleEdges, b = without.plasticitySummary().eligibleEdges;
-  return [a === b && a > 0, `eligible contacts: ${a} with extension, ${b} without`];
+  return [a === b && a > 0, `eligible connection slots: ${a} with extension, ${b} without`];
 });
 
 check('heat is no longer injected into the visual looming detectors', () => {

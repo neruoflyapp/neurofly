@@ -140,11 +140,16 @@ export class LocomotorSim {
     this.totalSpikes = 0; this.motorSpikes = 0; this.sensorySpikes = 0; this.simMs = 0;
   }
 
-  setDescending(type, side, rate) {
-    this.dnRates.set(`${type}:${side}`, rate);
-    for (const i of this.commandGroups.get(`${type}:${side}`) || []) {
-      this.drive[i] = Math.min(0.35, Math.max(0, rate) * 0.004);
-    }
+  setDescending(type, side, rate) { this.setDescendingKey(`${type}:${side}`, rate); }
+
+  // The brain calls this every simulated millisecond with a fixed key per
+  // descending group, so no key string is built per call.
+  setDescendingKey(key, rate) {
+    this.dnRates.set(key, rate);
+    const cells = this.commandGroups.get(key);
+    if (!cells) return;
+    const value = Math.min(0.35, Math.max(0, rate) * 0.004);
+    for (let q = 0; q < cells.length; q++) this.drive[cells[q]] = value;
   }
 
   indices(role, leg = null) {
@@ -164,12 +169,12 @@ export class LocomotorSim {
   // One millisecond of stepping: descending rates and leg proprioception in,
   // drive onto the decoder's premotor cells out.
   _rhythmStep() {
-    const stepper = this.stepper;
+    const stepper = this.stepper, dn = (key) => this.dnRates.get(key) || 0;
     stepper.update({
-      forward: (this._dn('DNp09', 'left') + this._dn('DNp09', 'right')) / 2,
-      backward: (this._dn('MDN', 'left') + this._dn('MDN', 'right')) / 2,
-      steerLeft: (this._dn('DNa01', 'left') + this._dn('DNa02', 'left')) / 2,
-      steerRight: (this._dn('DNa01', 'right') + this._dn('DNa02', 'right')) / 2,
+      forward: (dn('DNp09:left') + dn('DNp09:right')) / 2,
+      backward: (dn('MDN:left') + dn('MDN:right')) / 2,
+      steerLeft: (dn('DNa01:left') + dn('DNa02:left')) / 2,
+      steerRight: (dn('DNa01:right') + dn('DNa02:right')) / 2,
     });
     const drive = this.rhythmDrive, { slots, touched } = this.rhythmDecoder;
     for (let q = 0; q < touched.length; q++) drive[touched[q]] = 0;
@@ -191,48 +196,62 @@ export class LocomotorSim {
 
   step(ms) {
     if (!(ms > 0)) return;
+    // Arrays and parameters read once per call; the arithmetic, and its order,
+    // are unchanged.
+    const n = this.n, baseline = this.parameters.baseline, adaptationKick = this.parameters.adaptationKick;
+    const voltage = this.voltage, adaptation = this.adaptation, rates = this.rates, refractory = this.refractory;
+    const excitatory = this.excitatory, inhibitory = this.inhibitory;
+    const nextExcitatory = this.nextExcitatory, nextInhibitory = this.nextInhibitory;
+    const drive = this.drive, sensoryDrive = this.sensoryDrive, rhythmDrive = this.rhythmDrive;
+    const sensory = this.sensory, sensoryLeg = this.sensoryLeg, sensoryKindCode = this.sensoryKindCode;
+    const roleCode = this.roleCode, rowStart = this.rowStart, targets = this.targets, weights = this.weights;
+    const hipLimit = LegDynamics.hipLimit, restKnee = LegDynamics.restKnee;
+    const silenced = this.silenced, synapsesEnabled = this.synapsesEnabled;
     for (let t = 0; t < ms; t++) {
       this.simMs++;
       if (this.stepper) this._rhythmStep();
-      for (const i of this.sensory) this.sensoryDrive[i] = 0;
-      if (this.feedbackEnabled && this.feedback.length === 6) {
-        for (const i of this.sensory) {
-          const f = this.feedback[this.sensoryLeg[i]];
-          const kind = this.sensoryKindCode[i];
+      for (let q = 0; q < sensory.length; q++) sensoryDrive[sensory[q]] = 0;
+      const feedback = this.feedback;
+      if (this.feedbackEnabled && feedback.length === 6) {
+        for (let q = 0; q < sensory.length; q++) {
+          const i = sensory[q];
+          const f = feedback[sensoryLeg[i]];
+          const kind = sensoryKindCode[i];
           const value = kind === 0
             ? (f.contact ? Math.min(1, f.load * 6) : 0)
             : kind === 1
-              ? Math.min(1, Math.abs(f.hipAngle) / LegDynamics.hipLimit + Math.abs(f.elevationVelocity) / 20)
+              ? Math.min(1, Math.abs(f.hipAngle) / hipLimit + Math.abs(f.elevationVelocity) / 20)
               : Math.min(1, Math.abs(f.kneeVelocity) / 20 + Math.abs(f.hipVelocity) / 16
-              + Math.abs(f.kneeAngle - LegDynamics.restKnee) * 0.35);
-          this.sensoryDrive[i] = value * 0.10;
+              + Math.abs(f.kneeAngle - restKnee) * 0.35);
+          sensoryDrive[i] = value * 0.10;
         }
       }
-      for (let i = 0; i < this.n; i++) {
-        this.excitatory[i] = this.excitatory[i] * 0.8187308 + this.nextExcitatory[i];
-        this.inhibitory[i] = this.inhibitory[i] * 0.9048374 + this.nextInhibitory[i];
-        this.nextExcitatory[i] = 0; this.nextInhibitory[i] = 0;
+      for (let i = 0; i < n; i++) {
+        excitatory[i] = excitatory[i] * 0.8187308 + nextExcitatory[i];
+        inhibitory[i] = inhibitory[i] * 0.9048374 + nextInhibitory[i];
+        nextExcitatory[i] = 0; nextInhibitory[i] = 0;
       }
-      const silenced = this.silenced, anySilenced = silenced.size > 0;
-      for (let i = 0; i < this.n; i++) {
-        this.rates[i] *= 0.9048374;
-        this.adaptation[i] *= 0.9950125;
-        if (anySilenced && silenced.has(i)) { this.voltage[i] = 0; this.rates[i] = 0; continue; }
-        if (this.refractory[i] > 0) { this.refractory[i]--; continue; }
-        this.voltage[i] = Math.max(-1, this.voltage[i] * 0.9512294 + this.excitatory[i] + this.inhibitory[i]
-          + this.parameters.baseline + this.drive[i] + this.sensoryDrive[i] + this.rhythmDrive[i] - this.adaptation[i]);
-        if (this.voltage[i] >= 1) {
-          this.voltage[i] = 0; this.refractory[i] = 2;
-          this.adaptation[i] += this.parameters.adaptationKick;
-          this.rates[i] += 95.16258;
+      const anySilenced = silenced.size > 0;
+      for (let i = 0; i < n; i++) {
+        rates[i] *= 0.9048374;
+        adaptation[i] *= 0.9950125;
+        if (anySilenced && silenced.has(i)) { voltage[i] = 0; rates[i] = 0; continue; }
+        if (refractory[i] > 0) { refractory[i]--; continue; }
+        voltage[i] = Math.max(-1, voltage[i] * 0.9512294 + excitatory[i] + inhibitory[i]
+          + baseline + drive[i] + sensoryDrive[i] + rhythmDrive[i] - adaptation[i]);
+        if (voltage[i] >= 1) {
+          voltage[i] = 0; refractory[i] = 2;
+          adaptation[i] += adaptationKick;
+          rates[i] += 95.16258;
           this.totalSpikes++;
-          const rc = this.roleCode[i];
+          const rc = roleCode[i];
           if (rc === 1) this.motorSpikes++;
           else if (rc === 2) this.sensorySpikes++;
-          if (this.synapsesEnabled) {
-            for (let e = this.rowStart[i]; e < this.rowStart[i + 1]; e++) {
-              if (this.weights[e] >= 0) this.nextExcitatory[this.targets[e]] += this.weights[e];
-              else this.nextInhibitory[this.targets[e]] += this.weights[e];
+          if (synapsesEnabled) {
+            for (let e = rowStart[i], end = rowStart[i + 1]; e < end; e++) {
+              const we = weights[e];
+              if (we >= 0) nextExcitatory[targets[e]] += we;
+              else nextInhibitory[targets[e]] += we;
             }
           }
         }

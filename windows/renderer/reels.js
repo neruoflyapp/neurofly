@@ -38,13 +38,11 @@ window.promo = {
     const spec=specs[index];if(!spec) throw new Error('bad reel index');
     if(active!==index){
       active=index;view.setHighlight(null);
-      for(const group of view.groups){
-        group.object.material.opacity=group.tier==='bg'?.36:spec.groups.includes(group.key)?.90:.30;
-      }
+      view.groups.forEach((group,gi)=>view.setGroupOpacity(gi,group.tier==='bg'?.36:spec.groups.includes(group.key)?.90:.30));
       el('chapter').textContent=spec.chapter;el('eyebrow').textContent=spec.eyebrow;
       el('headline').innerHTML=spec.headline;el('detail').textContent=spec.detail;
       view.last=null;view.pending=0;view.idle=0;view.activeGlow.clear();view.edgeGlow.fill(0);
-      for(const node of view.flashPool) node.visible=false;
+      view.clearFlashes();
     }
     const q=smooth(second/8.25);
     view.group.rotation.y=mix(...spec.rotation,q);

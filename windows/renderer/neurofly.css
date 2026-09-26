@@ -121,6 +121,8 @@ body.focus-mode #focusStim { display: inline-flex; }
 .card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 12.5px; font-weight: 650; letter-spacing: .1px; color: var(--ink); }
 .card h3 .tag { margin-left: auto; }
 .card p, .note { color: var(--muted); font-size: 11.8px; line-height: 1.55; margin: 6px 0 0; }
+.card .timing-status { margin: 0 0 12px; padding: 9px 10px; border: 1px solid var(--line-2); border-left: 3px solid var(--accent); border-radius: 7px; background: var(--surface); color: var(--ink-2); font-size: 11.5px; line-height: 1.45; }
+.card .timing-status[data-state="gap"], .card .timing-status[data-state="behind"] { border-left-color: #f0c66a; color: #f0d69d; }
 .tag { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 5px; font-size: 9.5px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; border: 1px solid var(--line-2); color: var(--muted); background: var(--surface); }
 .tag.measured { color: #9dffbf; border-color: #1f5a37; background: #0c2016; }
 .tag.model { color: #ffd79a; border-color: #5c4623; background: #211909; }
@@ -162,7 +164,7 @@ select, input[type=text], input[type=search], input[type=number] { width: 100%; 
 .meter-head { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--ink-2); margin-bottom: 4px; }
 .meter-head span:last-child { font-family: var(--mono); color: var(--ink); }
 .meter-track { height: 6px; border-radius: 4px; background: #0a100f; border: 1px solid var(--line); overflow: hidden; }
-.meter-fill { height: 100%; width: 0; background: linear-gradient(90deg, #0a7a2a, var(--accent)); transition: width .15s linear; }
+.meter-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #0a7a2a, var(--accent)); transform: scaleX(0); transform-origin: left center; transition: transform .15s linear; will-change: transform; }
 .state-big { display: flex; align-items: center; gap: 12px; }
 .state-big .glyph { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent); border: 1px solid #00ff4140; }
 .state-big b { display: block; font-size: 18px; font-weight: 650; letter-spacing: -.3px; }
@@ -177,24 +179,26 @@ select, input[type=text], input[type=search], input[type=number] { width: 100%; 
 .pop-row .acts button.on { border-color: var(--accent); color: var(--accent); }
 .pop-row .acts button.on.silence { border-color: var(--danger); color: var(--danger); }
 .pop-row small { color: var(--faint); font-size: 10.5px; }
-.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; background: #0d1715cc; border: 1px solid var(--line-2); font-size: 11.5px; color: var(--ink-2); backdrop-filter: blur(6px); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; background: #0d1715eb; border: 1px solid var(--line-2); font-size: 11.5px; color: var(--ink-2); }
 .chip b { color: var(--ink); font-weight: 600; }
 .chip.accent { border-color: #00ff4166; color: var(--accent); }
 .chip.danger { border-color: #ff6b8b88; color: #ffc2cf; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 
-/* ---- HUD over the terrarium ---- */
+/* ---- HUD over the terrarium ----
+   No backdrop-filter over the live canvases: the scene under it changes every
+   frame, so the blur would be recomputed on the GPU every frame. */
 #hud { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 .hud-tl { position: absolute; top: 14px; left: 14px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .hud-tr { position: absolute; top: 14px; right: 14px; display: flex; gap: 6px; pointer-events: auto; }
 .hud-br { position: absolute; bottom: 12px; right: 14px; color: #c9d6d1aa; font-size: 10.5px; }
-.behaviour { display: flex; align-items: center; gap: 10px; padding: 8px 14px 8px 10px; border-radius: 12px; background: #0b1412d9; border: 1px solid #2c4a40; backdrop-filter: blur(8px); box-shadow: 0 8px 30px #0006; }
+.behaviour { display: flex; align-items: center; gap: 10px; padding: 8px 14px 8px 10px; border-radius: 12px; background: #0b1412ee; border: 1px solid #2c4a40; box-shadow: 0 8px 30px #0006; }
 .behaviour .glyph { width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent); }
 .behaviour b { font-size: 15px; font-weight: 650; letter-spacing: -.2px; }
 .behaviour small { display: block; color: var(--muted); font: 10.5px var(--mono); }
 .behaviour.alarm { border-color: #ff6b8b; box-shadow: 0 0 0 1px #ff6b8b55, 0 8px 30px #ff2a5530; }
 .behaviour.alarm .glyph { background: #ff6b8b22; color: var(--danger); }
-.hud-tr .btn { pointer-events: auto; background: #0e1816d9; backdrop-filter: blur(6px); }
+.hud-tr .btn { pointer-events: auto; background: #0e1816ee; }
 .why-toast { position: absolute; left: 14px; bottom: 14px; max-width: 380px; pointer-events: auto; cursor: pointer; padding: 10px 12px; border-radius: 12px; background: #0b1412ee; border: 1px solid #2c4a40; box-shadow: 0 10px 40px #0008; animation: rise .25s ease-out; }
 .why-toast .eyebrow { display: flex; align-items: center; gap: 6px; }
 .why-toast b { display: block; margin-top: 3px; font-size: 13px; }
@@ -295,9 +299,10 @@ select, input[type=text], input[type=search], input[type=number] { width: 100%; 
 .crit-num { width: 24px; height: 24px; border-radius: 7px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; font: 700 12px var(--mono); background: var(--surface); border: 1px solid var(--line-2); color: var(--ink-2); }
 .crit-head b { font-size: 12.5px; font-weight: 650; }
 .crit-head small { display: block; color: var(--muted); font-size: 11px; margin-top: 1px; }
-.crit-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 9px; }
-.crit-col { border-radius: 8px; padding: 7px 8px; background: var(--surface); border: 1px solid var(--line); font-size: 11px; color: var(--ink-2); line-height: 1.45; }
-.crit-col .k { font-size: 9.5px; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; display: flex; gap: 5px; align-items: center; }
+.crit-cols { display: grid; grid-template-columns: 1fr; gap: 6px; margin-top: 9px; }
+.crit-col { border-radius: 8px; padding: 7px 9px 8px; background: var(--surface); border: 1px solid var(--line); font-size: 11px; color: var(--ink-2); line-height: 1.45; }
+.crit-col .k { font-size: 9.5px; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; display: flex; flex-wrap: wrap; gap: 4px 5px; align-items: center; }
+.crit-col .k .level { margin-left: auto; text-transform: none; letter-spacing: 0; }
 .level { display: inline-block; padding: 1px 6px; border-radius: 4px; font: 700 10px var(--mono); }
 .level.vh { background: #0c3a1c; color: #7dffab; }
 .level.h { background: #16331f; color: #b6f5c8; }
@@ -306,6 +311,13 @@ select, input[type=text], input[type=search], input[type=number] { width: 100%; 
 .level.partial { background: #10283a; color: #9fd9ff; }
 .level.absent { background: #231a1d; color: #d9b0bb; }
 .level.present { background: #0c3a1c; color: #7dffab; }
+.level.experimental { background: #2b2610; color: #ffe08a; }
+.glance { display: grid; gap: 12px; }
+.glance-big { display: block; font-size: 20px; font-weight: 700; margin-top: 3px; letter-spacing: -.2px; }
+.glance .chips .level { font-size: 10.5px; padding: 3px 7px; }
+.glance-caveat { margin: 0; padding-top: 10px; border-top: 1px solid var(--line); }
+.crit-felt { border-style: dashed; background: transparent; }
+.crit-felt .crit-num { color: var(--muted); }
 .crit .run { margin-top: 8px; }
 
 /* ---- toasts, dialog ---- */

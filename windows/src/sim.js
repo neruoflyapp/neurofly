@@ -38,7 +38,7 @@ function freshNeuralSeed() {
 }
 
 // This is deliberately a bounded, phenomenological experiment, not a claim
-// that a particular FlyWire contact has this exact plasticity rule. Classical
+// that a particular FlyWire connection has this exact plasticity rule. Classical
 // timing rules differ by cell type, location and neuromodulatory state. The
 // mode is opt-in so baseline connectome runs retain their fixed measured edge
 // counts and remain comparable across versions.
@@ -419,7 +419,7 @@ export class LIFSim {
       const key = `${nr.type}:${nr.side}`;
       if (!groupByKey.has(key)) {
         groupByKey.set(key, this.cordSourceGroups.length);
-        this.cordSourceGroups.push({ type: nr.type, side: nr.side, count: 0 });
+        this.cordSourceGroups.push({ type: nr.type, side: nr.side, key, count: 0 });
       }
       const group = groupByKey.get(key);
       this.cordSourceGroups[group].count++;
@@ -494,6 +494,8 @@ export class LIFSim {
     this.slotWatch = new Uint8Array(edges.length);   // watch group + 1 of the target, 0 = none
     this.daEdgeCount = 0;
     this.modOtherEdgeCount = 0;
+    this.daOutgoingCount = new Uint32Array(n);
+    this.modOutgoingCount = new Uint32Array(n);
     this.sparseEdgeCount = 0;
     // LC4/LPLC2 -> GF and Johnston's organ (overwhelmingly auditory JO-A/B:
     // 1,467 of the 1,501 JO synapses onto GF) -> GF couple via
@@ -533,10 +535,11 @@ export class LIFSim {
       this.ntCode[slot] = nt;
       this.slotClass[slot] = nt === 1 ? 2 : nt === 2 ? 3 : nt === 3 ? 4 : weight < 0 ? 1 : 0;
       this.slotWatch[slot] = this.watchOf[post] + 1;
-      if (nt === 1) this.daEdgeCount++;
-      else if (nt === 2 || nt === 3) this.modOtherEdgeCount++;
+      if (nt === 1) { this.daEdgeCount++; this.daOutgoingCount[pre]++; }
+      else if (nt === 2 || nt === 3) { this.modOtherEdgeCount++; this.modOutgoingCount[pre]++; }
       fill[pre]++;
     }
+    this._partitionRows();
     this.plasticity = makePlasticityConfig(plasticity);
     this._preparePlasticity();
 
@@ -681,15 +684,53 @@ export class LIFSim {
     }
   }
 
+  // Each CSR row holds its excitatory slots first, then its inhibitory ones,
+  // each group in the data's order, so step() delivers a spike in two
+  // branch-free loops. Every target still receives its additions in the same
+  // order as before, so the arithmetic is unchanged. A weight keeps its sign
+  // for life (drug gains are >= 0, learned weights stay within bounds);
+  // a fully blocked inhibitory synapse becomes 0 and is handled in its group.
+  // Slots that feed a watched population are listed per row for attribution.
+  _partitionRows() {
+    const n = this.n, rowStart = this.rowStart, w = this.w, slots = w.length;
+    const order = new Int32Array(slots);
+    this.rowInhStart = new Int32Array(n);
+    for (let i = 0; i < n; i++) {
+      let at = rowStart[i];
+      for (let k = rowStart[i]; k < rowStart[i + 1]; k++) if (w[k] >= 0) order[at++] = k;
+      this.rowInhStart[i] = at;
+      for (let k = rowStart[i]; k < rowStart[i + 1]; k++) if (w[k] < 0) order[at++] = k;
+    }
+    for (const key of ['colIdx', 'w', 'ntCode', 'slotClass', 'slotWatch']) {
+      const old = this[key], next = new old.constructor(slots);
+      for (let k = 0; k < slots; k++) next[k] = old[order[k]];
+      this[key] = next;
+    }
+    this.watchRowStart = new Int32Array(n + 1);
+    for (let i = 0; i < n; i++) {
+      let count = 0;
+      for (let k = rowStart[i]; k < rowStart[i + 1]; k++) if (this.slotWatch[k] !== 0) count++;
+      this.watchRowStart[i + 1] = this.watchRowStart[i] + count;
+    }
+    this.watchSlots = new Int32Array(this.watchRowStart[n]);
+    for (let i = 0, at = 0; i < n; i++) {
+      for (let k = rowStart[i]; k < rowStart[i + 1]; k++) if (this.slotWatch[k] !== 0) this.watchSlots[at++] = k;
+    }
+  }
+
   // Build only the reverse index needed by the optional learning experiment.
-  // It covers excitatory sensory-to-command contacts in this selected circuit,
-  // rather than silently making every one of the extracted contacts mutable.
+  // It covers excitatory sensory-to-command connection slots in this selected
+  // circuit, rather than silently making every extracted edge mutable.
   _preparePlasticity() {
     const p = this.plasticity;
     if (!p.enabled) return;
     const incomingCounts = new Int32Array(this.n);
     this.plasticEligible = new Uint8Array(this.w.length);
     this.plasticBaseW = new Float32Array(this.w);
+    // Learned efficacy is independent of the reversible transmitter gain.
+    // Keeping it separate preserves memory across a complete receptor block;
+    // the immutable baseline remains meaningful for learning exports at gain 0.
+    this.plasticLearnedW = new Float32Array(this.w);
     this.plasticPreBySlot = new Int32Array(this.w.length);
     this.plasticPreBySlot.fill(-1);
     this.plasticChangedSlots = [];
@@ -743,6 +784,8 @@ export class LIFSim {
       potentiations: p.potentiations,
       depressions: p.depressions,
       meanAbsRelativeChange: meanRelativeChange,
+      weightBasis: 'unmodulated synaptic efficacy; transmitter gain scales transmission separately',
+      blockedClassLearning: 'paused at zero transmitter gain (model assumption)',
     });
   }
 
@@ -752,8 +795,10 @@ export class LIFSim {
       pre: this.plasticPreBySlot[slot],
       post: this.colIdx[slot],
       initialWeight: this.plasticBaseW[slot],
-      currentWeight: this.w[slot],
-      relativeChange: (this.w[slot] - this.plasticBaseW[slot]) / this.plasticBaseW[slot],
+      currentWeight: this.plasticLearnedW[slot],
+      effectiveWeight: this.w[slot],
+      transmitterGain: this.transmitterGain[this.slotClass[slot]],
+      relativeChange: (this.plasticLearnedW[slot] - this.plasticBaseW[slot]) / this.plasticBaseW[slot],
       updateCount: this.plasticChangeCounts.get(slot) || 0,
     })));
   }
@@ -761,15 +806,21 @@ export class LIFSim {
   _adjustPlasticWeight(slot, signedMagnitude) {
     const p = this.plasticity;
     if (!p.enabled || !this.plasticEligible[slot] || signedMagnitude === 0) return;
+    const gain = this.transmitterGain[this.slotClass[slot]];
+    // This experimental rule assumes a fully blocked transmitter class does
+    // not update. It is a declared modelling choice, not a measured property
+    // of every selected FlyWire contact or a general pharmacological claim.
+    if (gain === 0) return;
     const base = this.plasticBaseW[slot];
     const min = base * (1 - p.maxRelativeChange);
     const max = base * (1 + p.maxRelativeChange);
-    const previous = this.w[slot];
+    const previous = this.plasticLearnedW[slot];
     // Compare the representable state, not a Float64 candidate that rounds
     // back to the same Float32 weight.
     const next = Math.fround(Math.min(max, Math.max(min, previous + base * p.learningRate * signedMagnitude)));
     if (next === previous) return;
-    this.w[slot] = next;
+    this.plasticLearnedW[slot] = next;
+    this.w[slot] = next * gain;
     if (!this.plasticChangeCounts.has(slot)) this.plasticChangedSlots.push(slot);
     this.plasticChangeCounts.set(slot, (this.plasticChangeCounts.get(slot) || 0) + 1);
     p.updates++;
@@ -846,34 +897,29 @@ export class LIFSim {
   // ---- pharmacology --------------------------------------------------------------
   // Scales every synapse of one transmitter class, as a receptor agonist or
   // antagonist would at the level of synaptic efficacy. Relative to the
-  // current weights, so learned changes survive a dose change.
+  // current learned efficacy, so learned changes survive a dose change.
+  // Pharmacological gain is not itself counted as synaptic learning.
   setTransmitterGain(cls, gain) {
     const c = typeof cls === 'number' ? cls : ['exc', 'inh', 'da', 'ser', 'oct'].indexOf(cls);
-    if (c < 0 || c > 4 || !Number.isFinite(gain) || gain < 0 || gain > 10) return false;
+    if (!Number.isInteger(c) || c < 0 || c > 4 || !Number.isFinite(gain) || gain < 0 || gain > 10) return false;
     const old = this.transmitterGain[c];
     if (old === gain) return true;
     this._ensureDataWeights();
-    if (old === 0) {
-      // A full block cannot be rescaled relative to itself; rebuild the class
-      // from the data weights instead.
-      this._restoreClass(c, gain);
-    } else {
-      const f = gain / old;
-      const w = this.w, sc = this.slotClass, base = this.plasticBaseW;
-      for (let k = 0; k < w.length; k++) if (sc[k] === c) { w[k] *= f; if (base) base[k] *= f; }
-    }
+    this._restoreClass(c, gain);
     this.transmitterGain[c] = gain;
     return true;
   }
   _restoreClass(c, gain) {
     if (!this._dataWeights) return;
     const w = this.w, sc = this.slotClass;
-    for (let k = 0; k < w.length; k++) if (sc[k] === c) w[k] = this._dataWeights[k] * gain;
-    if (this.plasticBaseW) for (let k = 0; k < w.length; k++) if (sc[k] === c) this.plasticBaseW[k] = this._dataWeights[k] * gain;
+    const unmodulated = this.plasticLearnedW || this._dataWeights;
+    for (let k = 0; k < w.length; k++) if (sc[k] === c) w[k] = unmodulated[k] * gain;
   }
-  // Keep a copy of the unmodified weights before the first dose, so a full
-  // block (gain 0) can be reversed.
-  _ensureDataWeights() { if (!this._dataWeights) this._dataWeights = new Float32Array(this.w); }
+  // Fixed-weight runs allocate a baseline lazily on their first dose. Learning
+  // runs already have an immutable baseline and current unmodulated weights.
+  _ensureDataWeights() {
+    if (!this._dataWeights) this._dataWeights = this.plasticBaseW || new Float32Array(this.w);
+  }
 
   // ---- attribution ------------------------------------------------------------------
   // Synaptic input delivered to one watched population during the last
@@ -977,7 +1023,9 @@ export class LIFSim {
     let stepDeliveries = 0;
     // Everything below is read inside the millisecond loop but set between
     // step() calls, so it is read once here instead of per neuron per ms.
-    const rowStart = this.rowStart, colIdx = this.colIdx, w = this.w, ntCode = this.ntCode;
+    const rowStart = this.rowStart, rowInhStart = this.rowInhStart, colIdx = this.colIdx, w = this.w;
+    const watchRowStart = this.watchRowStart, watchSlots = this.watchSlots;
+    const daOutgoingCount = this.daOutgoingCount, modOutgoingCount = this.modOutgoingCount;
     const popCode = this.popCode, srcCat = this.srcCat, slotWatch = this.slotWatch, watchOf = this.watchOf;
     const aExc = this.attribExc, aInh = this.attribInh, aSpk = this.attribSpikes;
     const popRate = this.popRate, popGain = this.popGain, popCount = this._popCount;
@@ -987,6 +1035,11 @@ export class LIFSim {
     const hotDrive = this.thermoHotDrive, coldDrive = this.thermoColdDrive;
     const sugar = this.sugarTaste, bitter = this.bitterTaste, dust = this.antennaDust;
     const loomLeft = this.loomLeft, loomRight = this.loomRight, ascend = this.ascend;
+    // Gait phase is fixed for this step() call. Reuse the identical sine term
+    // across its 1-ms neural substeps; the cord's changing gain is still read
+    // afresh each millisecond. Float64 preserves the original arithmetic.
+    const ascendWave = this._ascendWave ?? (this._ascendWave = new Float64Array(ascend.length));
+    let ascendWaveReady = false;
     const sens = this.sens;
     const windTarget = this.sensoryAnnotated ? this.sensWind : this.sens;
     const soundTarget = this.sensoryAnnotated ? this.sensAuditory : this.sens;
@@ -1061,17 +1114,25 @@ export class LIFSim {
         const ascendHz = ascendSum / Math.max(1, idx.length);
         const ascendGain = Math.min(1, ascendHz / 40) * 0.09;
         if (ascendGain > 0.0005) {
-          const ph = this.gaitPhase * 2 * Math.PI;
+          if (!ascendWaveReady) {
+            const ph = this.gaitPhase * 2 * Math.PI;
+            for (let k = 0; k < ascend.length; k++) ascendWave[k] = 0.5 + 0.5 * Math.sin(ph + this.ascendPhase[k]);
+            ascendWaveReady = true;
+          }
           for (let k = 0; k < ascend.length; k++) {
-            v[ascend[k]] += ascendGain * (0.5 + 0.5 * Math.sin(ph + this.ascendPhase[k]));
+            v[ascend[k]] += ascendGain * ascendWave[k];
           }
         }
       } else if (this.gaitDrive > 0.001) {
         // Legacy fallback (no real locomotor loaded): a synthetic rhythm
         // tied to body gait phase.
-        const ph = this.gaitPhase * 2 * Math.PI;
+        if (!ascendWaveReady) {
+          const ph = this.gaitPhase * 2 * Math.PI;
+          for (let k = 0; k < ascend.length; k++) ascendWave[k] = 0.5 + 0.5 * Math.sin(ph + this.ascendPhase[k]);
+          ascendWaveReady = true;
+        }
         for (let k = 0; k < ascend.length; k++) {
-          v[ascend[k]] += this.gaitDrive * 0.09 * (0.5 + 0.5 * Math.sin(ph + this.ascendPhase[k]));
+          v[ascend[k]] += this.gaitDrive * 0.09 * ascendWave[k];
         }
       }
       // Each stimulus reaches only the receptor neurons that transduce it; the
@@ -1165,20 +1226,25 @@ export class LIFSim {
       const ringBase = ring * G;
       for (let s = 0; s < nSpiked; s++) {
         const i = spiked[s];
-        const start = rowStart[i], end = rowStart[i + 1];
-        const cat = srcCat[i];
-        for (let k = start; k < end; k++) {
+        const start = rowStart[i], mid = rowInhStart[i], end = rowStart[i + 1];
+        cDA += daOutgoingCount[i];
+        cMod += modOutgoingCount[i];
+        // excitatory slots act now, inhibitory ones after the synaptic delay
+        for (let k = start; k < mid; k++) {
+          const j = colIdx[k];
+          const nv = v[j] + w[k];
+          v[j] = nv < -2 ? -2 : nv;
+        }
+        for (let k = mid; k < end; k++) {
           const j = colIdx[k], wk = w[k];
-          if (wk >= 0) { const nv = v[j] + wk; v[j] = nv < -2 ? -2 : nv; }
-          else { if (inh[j] === 0) inhD[inhN++] = j; inh[j] += wk; }
-          const nt = ntCode[k];
-          if (nt === 1) cDA++;
-          else if (nt === 2 || nt === 3) cMod++;
-          const wg = slotWatch[k];
-          if (wg !== 0) {
-            const o = (ringBase + wg - 1) * C + cat;
-            if (wk >= 0) aExc[o] += wk; else aInh[o] += wk;
-          }
+          if (wk < 0) { if (inh[j] === 0) inhD[inhN++] = j; inh[j] += wk; }
+          else if (v[j] < -2) v[j] = -2;   // blocked (0): delivered like any zero weight
+        }
+        const cat = srcCat[i];
+        for (let x = watchRowStart[i], xe = watchRowStart[i + 1]; x < xe; x++) {
+          const k = watchSlots[x], wk = w[k];
+          const o = (ringBase + slotWatch[k] - 1) * C + cat;
+          if (wk >= 0) aExc[o] += wk; else aInh[o] += wk;
         }
         stepDeliveries += end - start;
       }
@@ -1216,7 +1282,7 @@ export class LIFSim {
           if (group >= 0) rates[group] += gain[group] * a;
         }
         for (let i = 0; i < groups.length; i++) {
-          this.locomotor.setDescending(groups[i].type, groups[i].side, rates[i]);
+          this.locomotor.setDescendingKey(groups[i].key, rates[i]);
         }
         this.locomotor.step(1);
       }

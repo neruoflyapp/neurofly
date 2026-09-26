@@ -1,11 +1,236 @@
 # Windows NeuroFly — Validation & Reality Check
 
-Living document, last verified 23 September 2026 (release 2.1.0) against the
+Living document, last verified 26 September 2026 (after release 2.1.0) against the
 state of this branch. It states plainly what this connectome-driven simulation actually
 demonstrates and what it only models. It supplements, not
 replaces, the per-feature honesty comments already inline in the source
 (`app.js`, `world.js`, `sim.js`, `locomotor.js`) — this document indexes and
 cross-checks them, it isn't the primary source of truth; the code is.
+
+## Release 2.2.0 (26 September 2026)
+
+Everything below under "After 2.1.0" is in this release. In short:
+
+- **Faster.** Live workspace 26 → 56 fps on the reference machine (4-core
+  Celeron N5095, integrated graphics): interface writes only on change, no
+  backdrop blur, every terrarium object drawn per material (220 → 110 draw
+  calls) and the scenery that stands still merged across objects (110 → 74);
+  the connectome view in 6 draw calls instead of up to ~85 (Circuit
+  workspace 43.7 → 56.6 fps); the neural step's delivery loop split by sign
+  (bit-identical). The neural clock now keeps real time in the Live view
+  (1.00×).
+- **Reproducible.** A session, terrarium and spawn point included, is rebuilt
+  exactly from its seed; fireflies steer instead of turning instantly.
+- **Experiments.** The activation screen compares every cell type with its
+  control on an amount or a proportion (Mann–Whitney, Fisher,
+  Holm-adjusted), labels exploratory matches, and settles 1.5 s after each
+  reset; walking can break off grooming only when the command is held; exact
+  lab statistics and preserved recording and learning state.
+- **Sentience and science.** The Birch/Gibbons criteria checked against the
+  primary source, with a "Felt experience" row that states what cannot be
+  measured; corrected thermal and habituation literature.
+- **Interface.** Complete German, stacked sentience criteria, an eye-readback
+  regression test in the standard gate.
+
+## After 2.1.0 — audit of the science, the sentience map and performance (24–26 September 2026)
+
+### Science
+
+- **Activation screen redesigned.** Its 0.4 s settle measured the network's
+  start-up transient: after a trial reset MDN bursts to ~5.5 Hz in every
+  condition, and the "backward walking" credited to left DNa came from it
+  (0/8 with a 1.5 s settle). Walking and grooming are also so frequent
+  spontaneously that "appeared within 1.1 s" saturated. Each cell type is now
+  tested against its control on an amount — distance walked forward, time
+  spent grooming or walking backward, heading turned while walking — or on a
+  proportion of trials (takeoff, proboscis extension): Mann–Whitney or Fisher,
+  effect = rank-biserial correlation or difference in proportions, ✓ = effect
+  > 0 and raw p < 0.05. The steering neurons are compared with DNp09-driven
+  walking, because they act on a walking fly (Rayshubskiy et al.). Seed
+  20260923, 8 trials each: **9/10 by raw p** — giant fiber, LPLC2, MDN, DNg11, DNg12,
+  JO-F, sugar neurons, left and right DNa reproduce their published
+  behaviour; DNp09 does not reach significance (10.5 vs 6.5 units walked in
+  0.8 s, effect +0.44, exact permutation p = 0.154): the fly already walks much of the time in
+  the control, and the grooming dwell delays the switch.
+- **Small-sample statistics checked** (26 September). Mann-Whitney U now
+  enumerates the exact two-sided, pooled-midrank label permutations when at
+  most 100,000 allocations are needed, including tied readouts; larger
+  designs retain the tie-corrected normal approximation. The Mann-Whitney
+  method is identified beside its p values and in exported Lab JSON. Re-running
+  the optogenetic screen with master seed 20260923 and eight trials per arm
+  still gives 9/10 exploratory raw matches, but **7/10 after Holm correction**
+  across the ten target comparisons. Left and right DNa each have raw
+  p = 0.021 and adjusted p = 0.062; DNp09 remains nonsignificant
+  (raw p = 0.154). Neither tally is independent biological validation.
+- **Walking can break off grooming** (model assumption, `flymodel.js`
+  `WALK_OVERRIDES_GROOMING`, `WALK_OVERRIDE_HOLD_S`). Before, only the decay
+  of the grooming drive ended a grooming bout, so DNp09 activation during
+  grooming had no effect. Now a walking command held at ≥ 10 Hz (five times
+  its resting rate) for 0.25 s wins. The hold is measured, not tuned:
+  unstimulated DNp09 crosses 10 Hz only in flickers (live terrarium, 3 × 90 s:
+  58–59 episodes, median 0.02 s, longest 0.28 s), activation holds it at
+  140–230 Hz. Without the hold the rule broke off grooming in arousal bursts
+  and the extra walking opened the takeoff gate: flying 3.4 → 6.1% of the
+  time. With it (3 seeds × 90 s, hour 12, no input): walking 36.7%, idle
+  37.3%, leg grooming 23.9%, flying 2.2%; 2.1.0: 35.7 / 37.2 / 23.7 / 3.4%.
+  `locomotortest` covers both paths (grooming ending on its own through
+  idle; a strong command interrupting it) with the pose-continuity limits.
+- **Sentience map checked against the primary source.** Gibbons et al.
+  (2022) Table 11, adult Diptera: VH VH VH VH H VL(no research found) VH
+  VL(no research found) — exactly the app's ratings (a secondary summary on
+  the web lists different ones; the paper is authoritative). The summary no
+  longer puts a single model count next to "6 of 8" for real flies, which
+  invited comparing the two: the model's statuses are shown separately
+  (partly / experimental only / not in the model), with the statement that
+  the two rows answer different questions. A last row, "Felt experience",
+  states that it is not measurable in the fly or in the model.
+  `sciencetest` asserts that no summed model score exists.
+- **Thermal preference, corrected explanation.** The protocol cited only
+  Hamada et al. (2008): slow warmth avoidance in shallow gradients uses
+  internal AC neurons, which are not in this circuit. Simões et al. (2021,
+  Nat Commun 12:2044) show that fast turns away from heat need the antennal
+  hot cells — which are in it — comparing the two antennae (0.1–0.2 °C
+  predicts the turn), with AC neurons dispensable. Measured in the model:
+  driving the hot or cold cells of one antenna or both at full transduction
+  strength (6 seeds, 2 s) leaves DNa01/02, DNp09 and MDN at rest (e.g. DNa
+  left 4.95 ± 3.0 → 5.0 ± 2.9 Hz). The extracted circuit does not carry the
+  thermosensory signal to the neurons that steer or start walking, so no
+  preference can emerge; the verdict now says so. Both antennae still receive
+  the same temperature; per-antenna transduction would not change this
+  result and is left for when the pathway carries the signal.
+- **Habituation**, text only: the literature line now states where real
+  habituation of the giant-fiber pathway sits (its afferent pathway in the
+  brain) and that it depends on cAMP signalling (dunce, rutabaga; Engel &
+  Wu 1996). No mechanism was added: depression at the afferent–GF synapses
+  has no measured time constants, an assumed one would reproduce the finding
+  by construction, and it would change the calibrated escape race.
+- **Reproducible from the seed, terrarium included** (25 September). The
+  terrarium's layout, the fly's spawn point and every random draw inside
+  `world.js` during a run (e.g. where new food lands) came from
+  `Math.random`, not from the session seed: `world.js` had its own
+  `R = () => Math.random()`, which ClosedLoop's `withRandom` does not reach.
+  A live session could not be rebuilt from the seed in its header, and in
+  one test process a loop's behaviour depended on how many loops had been
+  built before it (furnished terrarium, seed 8: an escape at 7.3 s after
+  seeds 1–7 had run, none alone). The world now draws through util's
+  `random()` (the loop's seeded stream while it runs; the renderer installs
+  none and keeps the platform RNG for its own copy), and ClosedLoop builds the
+  terrarium and places the first fly from a placement stream derived from the
+  seed. Checked: seeds give the same run alone and after others (asleep,
+  seed 5: escape at 4.09 s both ways); `npm test` 217 PASS.
+  Escapes soon after start, traced: in the app 3 of 5 starts at night with
+  the PC idle (fly asleep) took off within 5 s (0.5–4.1 s); headless, 0 of 8
+  seeds at noon and 1 of 8 at 2 am (seed 5, 4.09 s) in 8 s without input.
+  The trigger is the world's own looming input (`World.sense`, source
+  "world"): the right eye's value jumps from 0.04 to 0.68 within one 8 ms
+  step. Static scenery contributes at most 0.16 there, so it is a night-time
+  firefly closing in on her (the approach term), and the causal explanation
+  ("something loomed on her right", ≤ 8 ms) is correct. A modelled stimulus,
+  not an artefact — but the jump came from fireflies changing course and
+  speed instantly. They now steer onto each new course with a time constant
+  of 0.35 s (`FIREFLY_TURN_S`, modelled; the same random draws as before):
+  the input rises 0.10 → 0.34 over ~90 ms and she still escapes, at 4.15 s
+  instead of 4.09 s. `npm test` 217 PASS. Live mix afterwards (furnished
+  terrarium, 3 seeds × 90 s, hour 12, no input): walking 35.6%, idle 36.9%,
+  leg grooming 23.7%, flying 3.8% (2.1.0: 35.7 / 37.2 / 23.7 / 3.4%); 7
+  takeoffs, 3 of them escapes from looming. The layouts differ from the
+  earlier measurements now that they come from the seed.
+- **German translation checked in the tests**: `tools/check-i18n.mjs --strict`
+  runs in `pretest`, and `npm run uitest` visits every workspace in German and
+  fails on any text without a translation (`i18n.js` records misses).
+
+### Performance
+
+Measured on the reference machine (4-core Celeron N5095, integrated
+graphics), Live workspace, 1484 × 861 window, the app's own adaptive pixel
+ratio. Before: 26 fps with the page's main thread 99–100% busy and the GPU
+process at 1.2 cores. Profiling (`Profiler` over the DevTools protocol,
+per-process CPU from Electron) found:
+
+- The interface rewrote its readouts in every frame: the behaviour icon was
+  re-created per frame, meter widths forced layout, `backdrop-filter` blurs
+  over the live 3D view were recomputed per frame, the connectome view and
+  the charts read `clientWidth` per frame (a synchronous layout while other
+  parts of the page had just changed), every formatted number built a new
+  `Intl` formatter, and the terrarium re-allocated its drawing buffer once a
+  second. With both 3D views switched off the interface alone kept the GPU
+  process at 0.83 cores.
+- The terrarium drew ~220 meshes per pass (shadow, main view, the fly's eye):
+  flowers, grass, ferns, berries and bushes part by part.
+
+Changes, all on the observer side (the fly's eye renders the same scene):
+DOM writes only on change and running numbers at ≤ 10 Hz, meter bars as
+compositor transforms, no backdrop blur over live canvases, sizes from
+`ResizeObserver`, cached formatters and theme colours, each object's parts
+merged per material in the renderer's copy of the world
+(`mergeByMaterial`; same triangles, 220 → 112 draw calls), and a guard
+against resizing the canvas when the pixel ratio has not changed. Result:
+**48 fps** (was 26); the interface alone 0.42 GPU-process cores (was 0.83).
+
+Neural step: each CSR row now holds its excitatory synapses before its
+inhibitory ones, so a spike is delivered in two branch-free loops (~7% less
+CPU), and the nerve cord no longer builds key strings every simulated
+millisecond. Both are bit-identical: a 20 s fingerprint of the complete
+neural and cord state, exercising every input path (vision, sound, wind,
+heat, cold, taste, dust, stimulation, optogenetics including negative
+drive, silencing, a full block and restore of inhibition, plasticity), gives
+the same hashes before and after. Headless, the complete closed loop runs at
+1.85× real time on this machine when nothing else competes (86% of it the
+neural step); the neural time gaps seen in the app came from contention with
+the page.
+
+Connectome view (25 September): every population was its own point cloud
+and every spike flash its own sphere mesh, up to ~85 draw calls per frame in
+the page's second WebGL view. Now one point cloud carries all populations
+(each point with its population's size and opacity, the stock material's
+maths, the same drawing order) and one more carries the flashes, drawn as
+discs as large on screen as the unlit spheres were; the legend switches and
+the films set a population's opacity through the view (`setGroupVisible`,
+`setGroupOpacity`, `clearFlashes`). 6 draw calls instead of ~40–85; Circuit
+workspace **43.7 → 56.6 fps**, as fast as with the connectome view switched
+off entirely (55.4). Observer side only; `npm run uitest` passes (every
+workspace translated, no page errors).
+
+Static scenery (26 September): the renderer's world now also merges the opaque
+parts of all objects that stand still, per look (material type, colours,
+shading, shadow flags), across objects (`World._batchStatic`): terrarium
+110 → 74 draw calls in each of the shadow, view and eye passes, Live
+53.8 → 56.4 fps with a higher adaptive resolution (pixel ratio 0.75 → 0.80).
+The same triangles are drawn; an object that is dragged leaves the batch.
+The rest is the fly herself (29 moving parts) and transparent or textured
+parts.
+
+Remaining: reading the fly's eye image back from the GPU
+(`getBufferSubData`) costs 8.4 ms per read at 20 reads per second, 17–19% of
+the page's main thread and now its largest single item: the read waits for
+the GPU process, which runs at a full core. Reading less often or in batches
+would change when her eye sees, and the image must stay byte-identical, so it
+is left for a separate change: render the eye in a worker (OffscreenCanvas;
+the renderer-side weather animation would have to run there on the same
+random stream) or move the eye pipeline onto the GPU and re-validate the
+looming tests.
+
+Eye backlog guard (25 September): `_renderEye()` now skips the GPU eye pass
+when a prior asynchronous read is still pending. Previously that pass was
+rendered into the eye target but could not produce a new sensory sample; the
+20 Hz trigger and all accepted reads are unchanged. In a separate-profile
+Electron check (`electron test/eyereadbacktest.mjs`), an idle-window sample
+under concurrent load recorded 22 attempted eye slots, 10 reads/renders and
+therefore 12 avoided discarded eye renders over 2.6 seconds. With an artificial
+100 ms read-completion backlog, 35 attempted slots yielded 8 reads/renders,
+avoiding 27 discarded renders. A direct GPU-target comparison found 0
+differences in all 6,144 RGBA bytes of the resulting eye image. The focused
+mock check (`node test/eyereadbacktest.js`) verifies ordering and byte
+preservation. These are conditional savings under read backlog, not a speedup
+of each necessary `getBufferSubData` call; the low slot rate in the live check
+was load-dependent and must not be presented as stable 20 Hz operation.
+
+### Interface
+
+- Sentience criteria: the two boxes per criterion ("Real flies", "This
+  model") are stacked instead of side by side; in the 348 px panel the
+  ~140 px columns wrapped every heading, source tag and grade over several
+  lines. The grade now sits on the heading line.
 
 ## Release 2.1.0 — walking through the nerve cord (23 September 2026)
 
@@ -102,8 +327,10 @@ idle 37%, leg grooming 24%, flying 3% (3 spontaneous flights).
   is superseded.
 - Guided experiments run on a second, separate virtual fly
   (`renderer/lab-worker.js`) in a bare arena at a fixed hour.
-- Unsimulated time under overload is measured, shown (Δt in the top bar) and
-  exported in the manifest (`totalDroppedSimulationSeconds`).
+- Unsimulated time under overload is measured per neural run and across the
+  session. The current fly's loss appears as Δt in the top bar; both values are
+  shown in Model and exported in the manifest. Respawn preserves the prior
+  run's loss in the intervention journal.
 
 ### Running circuit
 
@@ -230,20 +457,23 @@ carried into every CSV row. This permits a later analysis to reject pooled runs
 from different input bundles instead of assuming that two files named
 "FlyWire v783" are identical.
 
-The neural simulator now owns a deterministic PRNG. With a selected seed and
-the same millisecond-by-millisecond neural input, its LIF trace is bitwise
-repeatable; changing the seed changes the trajectory. This does **not** claim
-whole-world replay: cursor input, body/world placement and environmental
-history are separate sources of variation. `test/sciencetest.js` pins all of
-these boundaries, including rejection of a corrupted circuit endpoint.
+The neural simulator owns a deterministic PRNG. With a selected seed and the
+same millisecond-by-millisecond neural input, its LIF trace is bitwise
+repeatable; changing the seed changes the trajectory. Since 25 September,
+the seed also determines the initial terrarium and fly placement and the
+world's random draws. It alone does **not** guarantee a whole-session replay:
+cursor input, external commands and their times, selected hour, rendered-eye
+inputs and any simulation-time loss must also match. `test/sciencetest.js`
+pins the neural boundaries, including rejection of a corrupt circuit edge.
 
 The optional **experimenteller Lernkern** is a bounded pair-timing rule over
-1,627 excitatory sensory-to-command contacts from the extracted circuit. It
+1,627 selected excitatory sensory-to-command directed connections with
+contact-derived weights from the extracted circuit. It
 is off by default, creates a new individual/run when switched, and keeps every
 change bounded relative to the original extracted edge weight. It is a
 phenomenological experimental mechanism, not a measurement that the named
 FlyWire synapses obey STDP, nor evidence of memory, affect or subjective
-experience. Its separate learning-trace CSV records every changed contact's
+experience. Its separate learning-trace CSV records every changed connection's
 indices, initial/current weight, relative change and update count alongside
 the trial provenance and any scheduled protocol parameters. The UI supplies a
 fixed 16-trial visual-to-flight-alarm pre-before-post protocol and the exact
@@ -789,7 +1019,7 @@ stale — trust the test output, then fix this file.
 | Hierarchical brain ↔ VNC | Real MaleCNS descending (16) and ascending (34) neurons | Both directions now genuinely connected: brain command-neuron spikes → `setDescending` → VNC; VNC's own real ascending rate → brain's `sim.ascend` population (`locomotortest`'s causal check) | The population-rate interface itself (not literal cross-specimen synapses) is the modeling choice, documented project-wide |
 | Death / respawn | Full LIF state (`v`, `refr`, noise seed) | Death: `activityScale` forced to 0, the real network goes genuinely silent. Respawn: entire simulation state rebuilt from scratch | The health *budget* that triggers death is a modeled survival abstraction, not a measured physiological quantity |
 | Freeze | — (mechanical only) | The real brain and every real sense keep computing normally underneath | Position lock is explicitly labeled mechanical-only, no neural claim |
-| Ambient synapse web (resting-state rendering) | All 703,381 real edges indexed | Any edge, sampled for display or not, lights up in full the instant it actually carries a spike | The **permanently-drawn faint web** is a deterministic stride sample (performance only) — see `AMBIENT_EDGE_CAP` in `app.js`; the Regionen legend filters this sample by real endpoint classification |
+| Ambient synapse web (resting-state rendering) | All 703,381 real edges indexed | The faint web is a deterministic capped sample; spike flashes show at most 48 sampled outgoing edges for named populations or 12 for unnamed partners | Display-only sampling: every measured edge remains in the numerical simulation. The Groups legend filters the visible sample by real endpoint classification. |
 
 ## Test suite (must stay green)
 

@@ -23,19 +23,40 @@ export function setLanguage(next) {
   document.documentElement.lang = lang;
 }
 
+// German lookups that found no entry. The display falls back to English, so
+// a gap would otherwise go unnoticed; the UI test reads this set.
+export const untranslated = new Set();
+
 export function t(text, vars = null) {
-  let out = lang === 'de' ? (DE[text] ?? text) : text;
+  let out = text;
+  if (lang === 'de') {
+    const de = DE[text];
+    if (de === undefined) untranslated.add(text); else out = de;
+  }
   if (vars) for (const [k, v] of Object.entries(vars)) out = out.split(`{${k}}`).join(String(v));
   return out;
 }
 
-// Number formatting in the active locale.
+// Number formatting in the active locale. Formatters are cached: live
+// readouts format dozens of numbers several times a second, and
+// toLocaleString builds a new formatter on every call.
+const formatters = new Map();
+function formatter(digits) {
+  const key = `${lang}:${digits}`;
+  let f = formatters.get(key);
+  if (!f) {
+    f = new Intl.NumberFormat(lang === 'de' ? 'de-DE' : 'en-US', digits === null ? {} : { minimumFractionDigits: digits, maximumFractionDigits: digits });
+    formatters.set(key, f);
+  }
+  return f;
+}
+
 export function num(v, digits = 1) {
   if (!Number.isFinite(v)) return '—';
-  return v.toLocaleString(lang === 'de' ? 'de-DE' : 'en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return formatter(digits).format(v);
 }
 
 export function int(v) {
   if (!Number.isFinite(v)) return '—';
-  return Math.round(v).toLocaleString(lang === 'de' ? 'de-DE' : 'en-US');
+  return formatter(null).format(Math.round(v));
 }

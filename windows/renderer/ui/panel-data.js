@@ -69,6 +69,8 @@ export const dataPanel = {
     return {
       el,
       update(snap) {
+        recBtn.disabled = Boolean(ctx.state.recordingBusy);
+        format.disabled = Boolean(ctx.state.recordingBusy);
         recBtn.replaceChildren(icon('record', 14), snap.recording.active ? t('Stop and save ({rows} rows)', { rows: int(snap.recording.rows) }) : snap.recording.rows ? t('Save the kept recording') : t('Start recording'));
         recBtn.classList.toggle('recording', snap.recording.active);
         recInfo.textContent = snap.recording.active ? t('Recording · {s} s', { s: int(snap.recording.rows / 20) }) : '';

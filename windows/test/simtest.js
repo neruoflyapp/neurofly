@@ -21,8 +21,21 @@ console.log(`circuit: ${sim.n} neurons | loom L/R: ${sim.loomLeft.length}/${sim.
 // normalize by, so a zero here would make those rates silently meaningless.
 const ntOk = sim.ntCode.length === data.circuit.edges.length
   && sim.daEdgeCount > 0 && sim.modOtherEdgeCount > 0;
+let outgoingCountsOk = true;
+for (let i = 0; i < sim.n; i++) {
+  let da = 0, other = 0;
+  for (let k = sim.rowStart[i]; k < sim.rowStart[i + 1]; k++) {
+    const nt = sim.ntCode[k];
+    if (nt === 1) da++;
+    else if (nt === 2 || nt === 3) other++;
+  }
+  if (da !== sim.daOutgoingCount[i] || other !== sim.modOutgoingCount[i]) {
+    outgoingCountsOk = false;
+    break;
+  }
+}
 console.log(`neurotransmitter classes: ${sim.daEdgeCount} DA-edges, `
-  + `${sim.modOtherEdgeCount} SER/OCT-edges, aligned: ${ntOk}`);
+  + `${sim.modOtherEdgeCount} SER/OCT-edges, aligned: ${ntOk}, per-neuron counts: ${outgoingCountsOk}`);
 
 // Phase 1: 4 s spontaneous activity
 let gfSpont = 0;
@@ -117,7 +130,7 @@ console.log(`click probes: GF cluster -> spike ${gfStim ? 'yes' : 'NO'} (rate ${
   + `DNg11 cluster -> groom rate ${f(groomStim, 0)} Hz`);
 
 const pass = gfSpont === 0 && gfLoom > 0 && walkOn > 0 && gfStim && siestaPct > 3
-  && ntOk && sensAfterPuff > 30 && rateGFAfterStim > 5;
+  && ntOk && outgoingCountsOk && sensAfterPuff > 30 && rateGFAfterStim > 5;
 console.log(pass
   ? 'PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive'
   : 'FAIL: tune weights/noise');

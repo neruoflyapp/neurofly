@@ -16,10 +16,19 @@ export function buildShell(ctx, panels) {
   // ---- top bar ----
   const pill = h('span', { class: 'pill', 'data-state': 'running' }, h('span', { class: 'dot' }), h('span', { class: 'label' }));
   const session = h('span', { class: 'session' });
+  const sessionTime = h('b'), sessionSeed = h('b'), sessionSpeed = h('b');
+  const timeLabel = document.createTextNode(''), seedLabel = document.createTextNode('');
+  const flyLabel = document.createTextNode(''), flyNumber = document.createTextNode('');
+  const speedLabel = document.createTextNode('');
+  const sessionGap = h('span', { style: { color: 'var(--amber, #f0c66a)' } });
+  sessionGap.hidden = true;
+  session.append(sessionTime, timeLabel, seedLabel, sessionSeed, flyLabel, flyNumber,
+    document.createTextNode(' · '), sessionSpeed, speedLabel, sessionGap);
   const speeds = [0.25, 0.5, 1, 2, 4];
   const speedSeg = h('div', { class: 'seg', role: 'group' });
   const pauseBtn = h('button', { class: 'btn', type: 'button' });
-  const recordBtn = h('button', { class: 'btn', type: 'button' });
+  const recordText = h('span');
+  const recordBtn = h('button', { class: 'btn', type: 'button' }, icon('record', 14), recordText);
   const snapBtn = h('button', { class: 'btn ghost icon-only', type: 'button' }, icon('camera'));
   const focusStimBtn = h('button', { id: 'focusStim', class: 'btn', type: 'button' }, icon('loom', 16), h('span', {}, t('Looming threat')));
   const focusBtn = h('button', { id: 'focusMode', class: 'btn ghost icon-only', type: 'button', 'aria-pressed': 'false' }, icon('expand'));
@@ -42,6 +51,11 @@ export function buildShell(ctx, panels) {
     focusStimBtn.querySelector('span:last-child').textContent = t('Looming threat');
     focusStimBtn.title = t('Send a brief visual looming stimulus (model)');
     helpBtn.title = t('Quick guide');
+    timeLabel.nodeValue = ` ${t('neural time')} · `;
+    seedLabel.nodeValue = `${t('seed')} `;
+    flyLabel.nodeValue = ` · ${t('fly')} #`;
+    speedLabel.nodeValue = ` ${t('real time')}`;
+    sessionGap.title = t('Time not simulated for this fly during overload; not biological inactivity.');
   }
   pauseBtn.addEventListener('click', () => ctx.command('pause', { paused: !ctx.snap?.paused }));
   recordBtn.addEventListener('click', () => ctx.toggleRecording());
@@ -67,14 +81,30 @@ export function buildShell(ctx, panels) {
 
   ctx.toggleRecording = async () => {
     const snap = ctx.snap;
-    if (!snap) return;
-    if (!snap.recording.active) { ctx.command('record.start'); ctx.toast(t('Recording started — every measurement at 20 Hz.'), 'ok'); return; }
-    const res = await ctx.request('stopRecording', { format: ctx.state.recordFormat });
-    if (!res?.rows) { ctx.toast(t('Nothing was recorded.')); return; }
-    const saved = await ctx.save(ctx.state.recordFormat === 'bundle' ? 'saveExperiment' : 'saveRecording', res.content,
-      t('{rows} rows saved.', { rows: res.rows }));
-    if (saved?.ok) ctx.request('clearRecording');
-    else ctx.toast(t('The recording is kept in memory — save it from the Data workspace.'));
+    if (!snap || ctx.state.recordingBusy) return;
+    ctx.state.recordingBusy = true;
+    recordBtn.disabled = true;
+    try {
+      if (!snap.recording.active && !snap.recording.rows) {
+        const started = await ctx.command('record.start', {}, { reply: true });
+        if (started) ctx.toast(t('Recording started — every measurement at 20 Hz.'), 'ok');
+        else ctx.toast(t('The recording is kept in memory — save it from the Data workspace.'));
+        return;
+      }
+      // Freeze the chosen format across asynchronous worker/dialog replies.
+      const format = ctx.state.recordFormat;
+      const res = await ctx.request('stopRecording', { format });
+      if (!res?.rows) { ctx.toast(t('Nothing was recorded.')); return; }
+      const saved = await ctx.save(format === 'bundle' ? 'saveExperiment' : 'saveRecording', res.content,
+        t('{rows} rows saved.', { rows: res.rows }));
+      if (saved?.ok) await ctx.request('clearRecording');
+      else ctx.toast(t('The recording is kept in memory — save it from the Data workspace.'));
+    } catch (error) {
+      ctx.toast(error?.message || String(error), 'err');
+    } finally {
+      ctx.state.recordingBusy = false;
+      recordBtn.disabled = false;
+    }
   };
 
   // ---- rail and panels ----
@@ -100,7 +130,10 @@ export function buildShell(ctx, panels) {
     current = p.build(ctx);
     panelHost.replaceChildren(current.el);
     panelHost.scrollTop = 0;
-    if (ctx.snap) current.update?.(ctx.snap, {});
+    if (ctx.snap) {
+      current.update?.(ctx.snap, {});
+      updateTop(ctx.snap);
+    }
   }
 
   let updateT = 0;
@@ -113,21 +146,32 @@ export function buildShell(ctx, panels) {
     }
   });
 
+  let pauseVisual = null, pauseLanguage = null;
   function updateTop(snap) {
     const state = snap.dead ? 'dead' : snap.paused ? 'paused' : 'running';
     pill.dataset.state = state;
     pill.querySelector('.label').textContent = t(state === 'dead' ? 'Dead' : state === 'paused' ? 'Paused' : 'Live');
-    session.innerHTML = '';
-    session.append(
-      h('b', {}, `${num(snap.neuralMs / 1000, 1)} s`), ` ${t('neural time')} · ${t('seed')} `, h('b', {}, String(snap.seed)),
-      ` · ${t('fly')} #${snap.individual} · `, h('b', {}, `${num(snap.perf.simulationRealtime, 2)}×`), ` ${t('real time')}`);
-    if (snap.perf.totalDroppedSimulationSeconds > 0) {
-      session.append(h('span', { style: { color: 'var(--amber, #f0c66a)' }, title: 'Simulation time not computed during overload; not biological inactivity.' }, ` · Δt ${num(snap.perf.totalDroppedSimulationSeconds, 2)} s`));
+    const timeText = `${num(snap.neuralMs / 1000, 1)} s`;
+    const seedText = String(snap.seed);
+    const flyText = String(snap.individual);
+    const speedText = `${num(snap.perf.simulationRealtime, 2)}×`;
+    if (sessionTime.textContent !== timeText) sessionTime.textContent = timeText;
+    if (sessionSeed.textContent !== seedText) sessionSeed.textContent = seedText;
+    if (flyNumber.nodeValue !== flyText) flyNumber.nodeValue = flyText;
+    if (sessionSpeed.textContent !== speedText) sessionSpeed.textContent = speedText;
+    const lost = snap.perf.runDroppedSimulationSeconds ?? snap.perf.totalDroppedSimulationSeconds;
+    sessionGap.hidden = !(lost > 0);
+    if (lost > 0) sessionGap.textContent = ` · Δt ${num(lost, 2)} s`;
+    const language = getLanguage();
+    if (pauseVisual !== snap.paused || pauseLanguage !== language) {
+      pauseBtn.replaceChildren(icon(snap.paused ? 'play' : 'pause', 16), h('span', {}, t(snap.paused ? 'Resume' : 'Pause')));
+      pauseVisual = snap.paused;
+      pauseLanguage = language;
     }
-    pauseBtn.replaceChildren(icon(snap.paused ? 'play' : 'pause', 16), h('span', {}, t(snap.paused ? 'Resume' : 'Pause')));
     pauseBtn.classList.toggle('on', snap.paused);
     pauseBtn.title = t('Pause or resume the whole simulation (Space)');
-    recordBtn.replaceChildren(icon('record', 14), h('span', {}, snap.recording.active ? `${t('Stop')} · ${snap.recording.rows}` : t('Record')));
+    recordText.textContent = snap.recording.active ? `${t('Stop')} · ${snap.recording.rows}`
+      : snap.recording.rows ? t('Save the kept recording') : t('Record');
     recordBtn.classList.toggle('recording', snap.recording.active);
     recordBtn.title = t('Record every measurement as a CSV table at 20 Hz');
     for (const b of speedSeg.children) b.setAttribute('aria-pressed', String(b.textContent === `${snap.speed}×`));
@@ -170,7 +214,7 @@ export function buildShell(ctx, panels) {
   mount();
   return {
     select,
-    rebuild() { labelTop(); renderRail(); mount(); if (ctx.snap) updateTop(ctx.snap); },
+    rebuild() { labelTop(); renderRail(); mount(); },
     get active() { return active; },
   };
 }

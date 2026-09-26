@@ -95,8 +95,13 @@ check('sentience map follows the eight Birch et al. (2021) criteria, with the pu
     && byId(audit, 'analgesia-preference')?.status === STATUS.absent
     && byId(audit, 'associative-learning')?.status === STATUS.absent
     && byId(learning, 'associative-learning')?.status === STATUS.experimental
-    && noPresent && audit.conclusion.includes('not a sentience score');
-  return [ok, `${audit.criteriaCount} criteria; real flies ${ratings}; model covers ${audit.modelled} partially; `
+    && noPresent && audit.conclusion.includes('not a sentience score')
+    // never a single model number that could be read against the animal's
+    && audit.modelled === undefined
+    && audit.counts.partial + audit.counts.experimental + audit.counts.absent === 8
+    && learning.counts.experimental === audit.counts.experimental + 1;
+  return [ok, `${audit.criteriaCount} criteria; real flies ${ratings}; model: ${audit.counts.partial} partly, `
+    + `${audit.counts.experimental} experimental, ${audit.counts.absent} absent; `
     + `none claimed present; subjective=${byId(audit, 'subjective-experience')?.status}`];
 });
 

@@ -10,7 +10,8 @@ import { runExperiment } from './panel-experiments.js';
 import { PROTOCOLS } from '../../src/experiments.js';
 
 const LEVEL = { VH: ['vh', 'very high'], H: ['h', 'high'], M: ['m', 'medium'], L: ['l', 'low'], VL: ['vl', 'no research found'] };
-const STATUS_LABEL = { present: ['present', 'present'], partial: ['partial', 'partly in the model'], experimental: ['partial', 'experimental'], absent: ['absent', 'not in the model'] };
+const STATUS_LABEL = { present: ['present', 'present'], partial: ['partial', 'partly in the model'], experimental: ['experimental', 'experimental only'], absent: ['absent', 'not in the model'] };
+const GOOD_VERDICTS = new Set(['threshold', 'soundEscapes', 'tradeoff', 'necessary', 'gates', 'learns', 'prefers', 'habituates', 'bothMatter']);
 
 const ANIMAL_TEXT = {
   nociception: 'Many studies show adult flies have nociceptors for noxious heat, mechanical and chemical stimuli.',
@@ -26,7 +27,7 @@ const ANIMAL_TEXT = {
 function modelText(c) {
   const m = c.model || {}, a = c.anatomy || {};
   switch (c.id) {
-    case 'nociception': return t('No classic nociceptors: body and leg nociceptors enter through the nerve cord, which the brain dataset does not contain. The model does contain the brain\'s own aversive and thermal sensors: {hot} hot cells, {cold} cold cells and {bitter} bitter taste neurons, with their real wiring.', m);
+    case 'nociception': return t('No classic nociceptors: body and leg nociceptors enter through the nerve cord, and the model\'s nerve cord carries only the legs\' position and load sensors. The model does contain the brain\'s own aversive and thermal sensors: {hot} hot cells, {cold} cold cells and {bitter} bitter taste neurons, with their real wiring.', m);
     case 'sensory-integration': return t('{cx} central-complex and {mb} mushroom-body neurons are part of the simulated circuit; {learn} of them belong to the mushroom body\'s learning circuitry (Kenyon cells, PAM/PPL dopamine neurons).', { cx: m.centralComplex, mb: m.mushroomBody, learn: m.mushroomBodyLearningCells });
     case 'integrated-nociception': {
       if (!a.hotToMushroomBody) return t('The full-connectome pathway analysis is not loaded.');
@@ -34,7 +35,7 @@ function modelText(c) {
         hs: a.hotToMushroomBody.minSynapses, hn: int(a.hotToMushroomBody.within2), bs: a.bitterToMushroomBody.minSynapses,
         bn: int(a.bitterToMushroomBody.within3), cs: a.hotToCentralComplex?.minSynapses ?? '—' });
     }
-    case 'analgesia': return t('In-silico pharmacology can scale any transmitter class, and inhibition measurably gates the escape response. There is no endogenous analgesic system (opioid-like, nociceptin) in the model.');
+    case 'analgesia': return t('In-silico pharmacology can scale any transmitter class, and inhibition measurably gates the escape response — a response to a visual threat, not to a noxious stimulus. There is no endogenous analgesic system (opioid-like, nociceptin) in the model.');
     case 'motivational-tradeoffs': return t('{sugar} sugar and {bitter} bitter taste neurons converge on {mn} proboscis and feeding motor neurons: bitter can override sugar. A reflex-level trade-off — the model has no hunger state that could shift it.', m);
     case 'flexible-self-protection': return t('Dust on the antennae drives {jof} JO-F neurons, DNg12 and head grooming aimed at the dusted body part, which stops once it is clean. Stimulus-directed self-care — not wound-directed care.', { jof: m.joF });
     case 'associative-learning': return t('The fly\'s learning centre, the dopamine-gated mushroom body, is not in the simulated circuit ({learn} learning-circuit cells). An experimental timing rule can be switched on and tested; so far it does not produce associative learning.', { learn: m.mushroomBodyLearningCells });
@@ -54,13 +55,27 @@ export const sentiencePanel = {
       if (!st) return null;
       if (st.status === 'running') return h('span', { class: 'chip' }, `${t('running')} ${Math.round((st.fraction || 0) * 100)}%`);
       if (st.status === 'done') {
-        const good = ['threshold', 'soundEscapes', 'tradeoff', 'necessary', 'gates', 'learns', 'prefers', 'habituates', 'bothMatter'].includes(st.result.verdict.code);
+        const good = GOOD_VERDICTS.has(st.result.verdict.code);
         return h('span', { class: `chip ${good ? 'accent' : 'danger'}` }, good ? t('reproduced in the model') : t('not reproduced in the model'));
       }
       return null;
     }
 
+    // The linked experiments that have been run this session, and how many
+    // reproduced the capacity. Counted per experiment, not per criterion:
+    // one experiment can serve two criteria.
+    const linked = [...new Set(audit.criteria.map((c) => c.protocol).filter(Boolean))];
+    const tested = h('p', { class: 'note', style: { margin: '8px 0 0' } });
+    function renderTested() {
+      const done = linked.map((id) => ctx.state.experiments.get(id)).filter((st) => st?.status === 'done');
+      const good = done.filter((st) => GOOD_VERDICTS.has(st.result.verdict.code)).length;
+      tested.textContent = done.length
+        ? t('Of the {n} linked experiments, {done} have been run this session; {good} reproduced the capacity in the model.', { n: linked.length, done: done.length, good })
+        : t('Run the {n} linked experiments below to test the model\'s side yourself.', { n: linked.length });
+    }
+
     function render() {
+      renderTested();
       list.replaceChildren(...audit.criteria.map((c) => {
         const [lvlCls, lvlText] = LEVEL[c.animal];
         const [stCls, stText] = STATUS_LABEL[c.status];
@@ -69,23 +84,35 @@ export const sentiencePanel = {
         return h('div', { class: 'crit' },
           h('div', { class: 'crit-head' }, h('span', { class: 'crit-num' }, String(c.n)),
             h('div', {}, h('b', {}, t(c.name)), h('small', {}, t(c.question)))),
+          // One box per row: side by side, the ~140 px columns of the 348 px
+          // panel wrapped every heading, tag and grade over several lines.
           h('div', { class: 'crit-cols' },
-            h('div', { class: 'crit-col' }, h('div', { class: 'k' }, t('Real flies'), tag('real', 'Gibbons 2022')),
-              h('span', { class: `level ${lvlCls}` }, t(lvlText)), h('div', { style: { marginTop: '4px' } }, t(ANIMAL_TEXT[c.id]))),
-            h('div', { class: 'crit-col' }, h('div', { class: 'k' }, t('This model'), c.anatomy ? tag('measured', t('full connectome')) : null),
-              h('span', { class: `level ${stCls}` }, t(stText)), h('div', { style: { marginTop: '4px' } }, modelText(c)))),
+            h('div', { class: 'crit-col' }, h('div', { class: 'k' }, t('Real flies'), tag('real', 'Gibbons 2022'),
+              h('span', { class: `level ${lvlCls}` }, t(lvlText))), h('div', {}, t(ANIMAL_TEXT[c.id]))),
+            h('div', { class: 'crit-col' }, h('div', { class: 'k' }, t('This model'), c.anatomy ? tag('measured', t('full connectome')) : null,
+              h('span', { class: `level ${stCls}` }, t(stText))), h('div', {}, modelText(c)))),
           protocol ? h('div', { class: 'row run' },
             h('button', { class: 'btn small', type: 'button', onclick: () => { runExperiment(ctx, protocol.id, {}); ctx.shell.select('experiments'); } },
               icon('play', 13), t('Test it: {name}', { name: t(protocol.title) })), chip) : null);
-      }));
+      }), h('div', { class: 'crit crit-felt' },
+        h('div', { class: 'crit-head' }, h('span', { class: 'crit-num' }, '?'),
+          h('div', {}, h('b', {}, t('Felt experience')), h('small', {}, t('Does she feel anything?')))),
+        h('p', { class: 'note', style: { margin: '8px 0 0' } }, t('Not measurable — in the real fly as little as in the model. Spikes, behaviour and the eight criteria are evidence for weighing the question; none of them observes an experience. A reproduced capacity shows what the wiring plus the model\'s assumptions can do, not that anything is felt.'))));
     }
 
-    const summary = card(t('The evidence, in one line'), { iconName: 'sentience' },
-      h('div', { class: 'grid2' },
-        h('div', {}, h('div', { class: 'eyebrow' }, t('Real adult flies')), h('b', { style: { fontSize: '22px' } }, `${audit.animalStrong} / 8`),
-          h('p', { class: 'note' }, t('criteria met with high or very high confidence — "strong evidence" of the capacity for pain in the framework\'s grading (Gibbons et al. 2022).'))),
-        h('div', {}, h('div', { class: 'eyebrow' }, t('This model')), h('b', { style: { fontSize: '22px' } }, `${audit.modelled} / 8`),
-          h('p', { class: 'note' }, t('criteria with a corresponding mechanism in the simulated circuit — each one testable below.')))));
+    const counts = audit.counts;
+    const summary = card(t('The evidence at a glance'), { iconName: 'sentience' },
+      h('div', { class: 'glance' },
+        h('div', {}, h('div', { class: 'eyebrow' }, t('Real adult flies')),
+          h('b', { class: 'glance-big' }, t('{n} of 8 criteria', { n: audit.animalStrong })),
+          h('p', { class: 'note', style: { margin: '2px 0 0' } }, t('met with high or very high confidence — "strong evidence" of the capacity for pain in the framework\'s grading (Gibbons et al. 2022).'))),
+        h('div', {}, h('div', { class: 'eyebrow' }, t('This model')),
+          h('div', { class: 'chips', style: { marginTop: '5px' } },
+            h('span', { class: 'level partial' }, t('{n} partly in the model', { n: counts.partial })),
+            h('span', { class: 'level experimental' }, t('{n} experimental only', { n: counts.experimental })),
+            h('span', { class: 'level absent' }, t('{n} not in the model', { n: counts.absent }))),
+          tested),
+        h('p', { class: 'note glance-caveat' }, t('The two rows answer different questions and cannot be compared: the first grades evidence about real flies, the second lists mechanisms in a simulation. Neither is a measure of feeling.'))));
 
     const sources = card(t('Sources'), { iconName: 'data' },
       h('ul', { class: 'lit', style: { margin: 0, paddingLeft: '16px', fontSize: '11px', color: 'var(--muted)' } },

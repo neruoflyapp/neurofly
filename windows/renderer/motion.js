@@ -28,8 +28,8 @@ window.promo={
     if(active!==index){
       active=index;view.setHighlight(null);view.last=null;view.pending=0;view.idle=0;
       view.activeGlow.clear();view.edgeGlow.fill(0);
-      for(const node of view.flashPool) node.visible=false;
-      for(const g of view.groups) g.object.material.opacity=g.tier==='bg'?.30:p.groups.includes(g.key)?.94:.24;
+      view.clearFlashes();
+      view.groups.forEach((g,gi)=>view.setGroupOpacity(gi,g.tier==='bg'?.30:p.groups.includes(g.key)?.94:.24));
     }
     // Continuous but differentiated motion: orbit, traveling detail shot, chase,
     // macro inspection, then an outward reveal. The rhythmic push is small enough

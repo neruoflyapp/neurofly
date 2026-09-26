@@ -35,11 +35,24 @@ export function action(iconName, title, desc, onclick, { disabled = false, hint 
   return h('button', { class: 'action', type: 'button', disabled, title: hint || desc, onclick }, icon(iconName, 18), h('b', {}, title), desc ? h('small', {}, desc) : null);
 }
 
+// The bar scales on the compositor (no layout), and nothing is written to the
+// page unless it changed: live readouts refresh several times a second.
 export function meter(label) {
   const val = h('span');
   const fill = h('div', { class: 'meter-fill' });
   const el = h('div', { class: 'meter' }, h('div', { class: 'meter-head' }, h('span', {}, label), val), h('div', { class: 'meter-track' }, fill));
-  return { el, set(fraction, text) { fill.style.width = `${Math.max(0, Math.min(1, fraction)) * 100}%`; val.textContent = text; } };
+  let lastScale = -1, lastText = null;
+  return { el, set(fraction, text) {
+    const scale = Math.round(Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0)) * 500) / 500;
+    if (scale !== lastScale) { lastScale = scale; fill.style.transform = `scaleX(${scale})`; }
+    if (text !== lastText) { lastText = text; val.textContent = text; }
+  } };
+}
+
+// Sets an element's text only when it changed (writing identical text still
+// invalidates layout).
+export function setText(el, text) {
+  if (el.textContent !== text) el.textContent = text;
 }
 
 export function toggle(label, pressed, onclick, title = '') {

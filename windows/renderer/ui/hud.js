@@ -4,11 +4,13 @@
 import { h, icon } from './dom.js';
 import { t, num } from '../i18n.js';
 import { behaviourOf, EVENT_INFO, TRIGGER_INFO } from './labels.js';
+import { setText } from './widgets.js';
 
 export function buildHud(ctx) {
   const root = document.getElementById('hud');
   let since = 0, lastKey = null, toastTimer = 0, lastShown = null;
   let els = {};
+  let chipT = 0, textT = 0, shownIcon = null, shownLabel = null, shownAlarm = null, chipKey = null;
 
   function build() {
     const beh = h('div', { class: 'behaviour' }, h('span', { class: 'glyph' }), h('div', {}, h('b'), h('small')));
@@ -25,7 +27,8 @@ export function buildHud(ctx) {
     const br = h('div', { class: 'hud-br' }, t('Drag the fly · move the cursor at her · right-drag to orbit'));
     const toast = h('div', { class: 'why-toast', hidden: true, onclick: () => { if (lastShown) ctx.openEvent?.(lastShown); } });
     root.replaceChildren(tl, tr, br, toast);
-    els = { beh, chips, toast };
+    els = { beh, chips, toast, glyph: beh.querySelector('.glyph'), label: beh.querySelector('b'), detail: beh.querySelector('small') };
+    shownIcon = null; shownLabel = null; shownAlarm = null; chipKey = null;
   }
 
   function chipsFor(snap) {
@@ -45,16 +48,25 @@ export function buildHud(ctx) {
     return out;
   }
 
-  let chipT = 0;
+  // Snapshots arrive with every displayed frame; the page is only touched
+  // when something visible changed, and the running numbers at most ten
+  // times a second.
   ctx.onFrame((snap) => {
     const b = behaviourOf(snap);
     if (b.key !== lastKey) { lastKey = b.key; since = snap.t; }
-    els.beh.classList.toggle('alarm', !!b.alarm);
-    els.beh.querySelector('.glyph').replaceChildren(icon(b.icon, 18));
-    els.beh.querySelector('b').textContent = b.label;
-    els.beh.querySelector('small').textContent = `${num(snap.t - since, 1)} s · ${num(snap.fly.speed, 0)} ${t('units/s')}`;
+    if (b.alarm !== shownAlarm) { shownAlarm = b.alarm; els.beh.classList.toggle('alarm', !!b.alarm); }
+    if (b.icon !== shownIcon) { shownIcon = b.icon; els.glyph.replaceChildren(icon(b.icon, 18)); }
+    if (b.label !== shownLabel) { shownLabel = b.label; els.label.textContent = b.label; }
     const now = performance.now();
-    if (now - chipT > 500) { chipT = now; els.chips.replaceChildren(...chipsFor(snap)); }
+    if (now - textT > 100) {
+      textT = now;
+      setText(els.detail, `${num(snap.t - since, 1)} s · ${num(snap.fly.speed, 0)} ${t('units/s')}`);
+    }
+    if (now - chipT > 500) {
+      chipT = now;
+      const chips = chipsFor(snap), key = chips.map((c) => c.outerHTML).join('');
+      if (key !== chipKey) { chipKey = key; els.chips.replaceChildren(...chips); }
+    }
     for (const e of snap.events) showEvent(e);
   });
 

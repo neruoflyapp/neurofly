@@ -20,7 +20,7 @@ import { Fly } from './flymodel.js';
 import { World } from './world.js';
 import { clampf, lag, withRandom, seededRandom, bodySeed } from './util.js';
 import { circadianActivity, localTemperature } from './environment.js';
-import { Recorder, RECORDING_HZ, MAX_ROWS } from './recording.js';
+import { Recorder, RECORDING_HZ } from './recording.js';
 import { SpatialMap } from './spatial.js';
 import { SamplingClock } from './sampling-clock.js';
 import { MODEL_VERSION } from './provenance.js';
@@ -88,7 +88,10 @@ export class ClosedLoop {
     this.data = data;
     this.bounds = { width: bounds.width, height: bounds.height };
     this.fixedHour = hour;                 // null: follow the real clock
-    this.world = new World(this.bounds, { layout, empty, dressing: false });
+    // The terrarium's layout and the first fly's spawn point come from the
+    // seed too, through a stream of their own (world.js draws via random()).
+    const placement = seededRandom((bodySeed(seed) ^ 0x2545f491) >>> 0);
+    this.world = withRandom(placement, () => new World(this.bounds, { layout, empty, dressing: false }));
     this.clock = new SimulationClock();
     this.signalBuilder = new SignalBuilder();
     this.instrumentsOn = instruments;
@@ -145,6 +148,7 @@ export class ClosedLoop {
     this.recordSampling = new SamplingClock(RECORDING_HZ);
     this.recordElapsed = 0;
     this.recordingStart = null;
+    this.recordingEnd = null;
     this.spatialMap = new SpatialMap(undefined, undefined, ['fear', 'loom', 'sens', 'temp', 'hot', 'cold', 'proboscis', 'dng12']);
     this.traceSampling = new SamplingClock(TRACE_HZ);
     this.pendingTrace = [];
@@ -158,13 +162,14 @@ export class ClosedLoop {
     this.pharmacology = { exc: 1, inh: 1, da: 1, ser: 1, oct: 1 };
     this.perf = { simulated: 0, compute: 0, spikes: 0, deliveries: 0, wall: 0, dropped: 0 };
     this.totalDroppedSimulationSeconds = 0;
+    this.runDroppedSimulationSeconds = 0;
     this.simTime = 0;
     this.paused = false;
     this.speed = 1;
 
     this.flies = [];
     this._buildSimulation(seed);
-    this._addFly();
+    withRandom(placement, () => this._addFly());
     this._prev = { state: this.fly.state, backward: 0, dart: 0, proboscisOut: false, heading: this.fly.heading, headingT: 0 };
     this.journalEvent('session-ready', { environment: this.environmentSnapshot(), body: this.bodySnapshot() });
   }
@@ -179,6 +184,9 @@ export class ClosedLoop {
       this.journalEvent('learning-aborted', { protocol: this.learningProtocol });
     }
     this.neuralSeed = (Number(seed) >>> 0) || 1;
+    this.runDroppedSimulationSeconds = 0;
+    this.clock.reset();
+    this.perf = { simulated: 0, compute: 0, neural: 0, spikes: 0, deliveries: 0, wall: 0, dropped: 0 };
     this._random = seededRandom(bodySeed(this.neuralSeed));
     this.learningProtocol = null;
     this.learningSession.reset();
@@ -565,6 +573,7 @@ export class ClosedLoop {
   // A fresh individual: new network state, same species-typical wiring.
   respawn({ seed = freshSeed(), plasticity = undefined } = {}) {
     if (typeof plasticity === 'boolean') this.plasticityEnabled = plasticity;
+    const previousRunDroppedSimulationSeconds = this.runDroppedSimulationSeconds;
     this._buildSimulation(seed);
     this.resetBody();
     const fly = this.fly;
@@ -581,7 +590,8 @@ export class ClosedLoop {
     this.spatialMap.reset();
     this.individual++;
     this.events = [];
-    this.journalEvent('respawn', { body: this.bodySnapshot(), environment: this.environmentSnapshot() });
+    this.journalEvent('respawn', { body: this.bodySnapshot(), environment: this.environmentSnapshot(),
+      previousRunDroppedSimulationSeconds });
   }
 
   resize({ width, height }) {
@@ -690,6 +700,7 @@ export class ClosedLoop {
     const dropped = this.clock.consumeDroppedSeconds();
     this.perf.dropped += dropped;
     this.totalDroppedSimulationSeconds += dropped;
+    this.runDroppedSimulationSeconds += dropped;
     this.perf.wall += elapsed;
     this.perf.compute += (performance.now() - t0) / 1000;
     return ticks;
@@ -1039,11 +1050,14 @@ export class ClosedLoop {
 
   // ---- recording ------------------------------------------------------------------------------
   startRecording() {
-    if (this.recording) return false;
-    this.recorder.clear();
+    // Retained rows belong to the user until an explicit successful save (or
+    // discard). A canceled save must never turn the next Record click into an
+    // implicit overwrite of the previous measurement series.
+    if (this.recording || this.recorder.count > 0) return false;
     this.recordElapsed = 0;
     this.recordSampling.reset();
     this.recording = true;
+    this.recordingEnd = null;
     this.recordingStart = this.manifest();
     this.journalEvent('recording-start');
     return true;
@@ -1051,20 +1065,33 @@ export class ClosedLoop {
 
   // Ends the recording and returns its content; the caller saves it.
   stopRecording({ format = 'csv' } = {}) {
-    const wasRecording = this.recording;
-    this.recording = false;
-    if (wasRecording) this.journalEvent('recording-stop', { rows: this.recorder.count });
+    this._finishRecording('user');
     const rows = this.recorder.count;
     if (!rows) return { rows: 0, content: null };
     const csv = this.recorder.toCSV();
     const content = format === 'bundle'
-      ? recordingPackageJSON({ csv, rowCount: rows, start: this.recordingStart, end: this.manifest(),
+      ? recordingPackageJSON({ csv, rowCount: rows, start: this.recordingStart, end: this.recordingEnd,
         samplingHz: RECORDING_HZ, missedSamples: this.recordSampling.missed })
       : csv;
-    return { rows, content, format, hitCap: rows >= MAX_ROWS };
+    return { rows, content, format, hitCap: this.recorder.full };
   }
 
-  clearRecording() { this.recorder.clear(); this.recordingStart = null; }
+  _finishRecording(reason) {
+    if (!this.recording) return;
+    this.recording = false;
+    this.journalEvent('recording-stop', { rows: this.recorder.count, reason });
+    // Capture once at the measurement boundary, not at each save attempt.
+    // Neural time, conditions and journal can keep changing after this point.
+    this.recordingEnd = this.manifest();
+  }
+
+  clearRecording() {
+    if (this.recording) return false;
+    this.recorder.clear();
+    this.recordingStart = null;
+    this.recordingEnd = null;
+    return true;
+  }
 
   _captureSample() {
     const sim = this.sim, fly = this.fly;
@@ -1102,7 +1129,9 @@ export class ClosedLoop {
       pharmacology: Object.entries(this.pharmacology).filter(([, v]) => v !== 1).map(([k, v]) => `${k}=${v}`).join(';'),
       simSpeed: this.speed,
     });
-    if (!ok) this.recording = false;
+    // Finish on the last retained sample; waiting for a failed next append
+    // would report a later (unrecorded) condition as the package's end state.
+    if (!ok || this.recorder.full) this._finishRecording('row-cap');
   }
 
   _traceSample() {
@@ -1192,6 +1221,7 @@ export class ClosedLoop {
       deliveriesPerSecond: p.wall > 0 ? p.deliveries / p.wall : 0,
       droppedSecondsPerSecond: p.wall > 0 ? p.dropped / p.wall : 0,
       totalDroppedSimulationSeconds: this.totalDroppedSimulationSeconds,
+      runDroppedSimulationSeconds: this.runDroppedSimulationSeconds,
     };
     if (p.wall > 1) this.perf = { simulated: 0, compute: 0, neural: 0, spikes: 0, deliveries: 0, wall: 0, dropped: 0, last: snap };
     return p.wall > 1 || !p.last ? snap : p.last;
